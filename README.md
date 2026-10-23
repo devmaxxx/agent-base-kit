@@ -91,8 +91,8 @@ The agents treat exit 2 as "block" and every other exit as "go on". So the hook 
 | `check` throws or rejects | 2 |
 | `check` returns anything else: `undefined`, `{ block: true }` without a reason, a string | 2 |
 | `check` returns a promise that never settles | 2 |
-| The payload is not JSON, not an object, or has a field of the wrong shape (a `command` sent as an array, `edits` as an object) | 2 |
-| The tool is not one of your kinds, or the payload names no tool | 0, and `check` is not called |
+| The payload is not JSON, not an object, names no tool, or has a field of the wrong shape (a `command` sent as an array, `edits` as an object) | 2 |
+| The tool is not one of your kinds | 0, and `check` is not called |
 | The hook cannot start: Node.js is missing, the build was deleted, a dependency was not bundled | 2, from `\|\| exit 2` |
 | The hook runs on a Node.js older than 22 | 2, with a message naming the fix |
 | The hook times out | Claude Code blocks it (`onFailure: "block"`). Codex lets the call run. |
@@ -189,7 +189,7 @@ function writeClaudePlugin(dir: string, options: ClaudePluginOptions): string[]
 
 - **Async checks.** A sync-only API would have to break later to allow I/O. A promise costs nothing now.
 - **The reason is printed as is.** Your plugin owns its message, so start it with the plugin's name. Errors get a `Blocked by <name>, it could not check the call: …` prefix.
-- **Which entries count as its own.** The pinned and `npx` forms must match exactly. The bare `node '<path>' hook` form from before the copy existed matches any path that contains the name. So a hook that only mentions the plugin, or another plugin whose path holds this one's name, is never removed.
+- **Which entries count as its own.** The `npx` form must match exactly. The pinned form matches any file under `~/.<name>/current/`, so a bin renamed between releases still replaces its old entry. The bare `node '<path>' hook` form from before the copy existed needs a directory named exactly after the plugin. So a hook that only mentions the plugin, or another plugin whose path merely contains this one's name, is never removed.
 - **POSIX shells only.** Hook commands rely on `|| exit 2` and single-quoted paths, so Windows is not supported yet.
 
 ## License

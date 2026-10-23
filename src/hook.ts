@@ -77,11 +77,11 @@ function verdictOf(value: unknown): HookVerdict {
  * Runs one PreToolUse call through the plugin and returns the exit code the
  * agent reads: 2 blocks the call, 0 lets it run.
  *
- * It fails closed. A payload that is not JSON, a field of the wrong shape, a
- * check that throws or rejects, and a result that is not a verdict all return
- * 2 with the error on stderr, because any other exit lets the call run
- * unchecked. A tool the plugin did not ask for returns 0 without calling the
- * check; so does a payload that names no tool.
+ * It fails closed. A payload that is not JSON or names no tool, a field of the
+ * wrong shape, a check that throws or rejects, and a result that is not a
+ * verdict all return 2 with the error on stderr, because any other exit lets
+ * the call run unchecked. A tool the plugin did not ask for returns 0 without
+ * calling the check.
  */
 export async function runHook(plugin: HookPlugin, stdin: string, options: RunHookOptions = {}): Promise<number> {
   const stderr = options.stderr ?? ((text: string) => void process.stderr.write(text))
@@ -90,7 +90,11 @@ export async function runHook(plugin: HookPlugin, stdin: string, options: RunHoo
     const payload: unknown = JSON.parse(stdin)
     if (!isObject(payload))
       throw new TypeError('payload is not an object')
-    const tool = typeof payload.tool_name === 'string' ? payload.tool_name : ''
+    // Both agents always name the tool, so a payload without one is a shape
+    // this does not know, and reading it as some other tool would let it run.
+    const tool = payload.tool_name
+    if (typeof tool !== 'string' || tool === '')
+      throw new TypeError('tool_name is not a tool name')
     const kind = KIND_OF_TOOL.get(tool)
     if (kind === undefined || !plugin.kinds.includes(kind))
       return 0

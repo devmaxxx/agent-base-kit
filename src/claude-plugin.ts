@@ -34,6 +34,10 @@ export interface ClaudePluginOptions {
 
 const MARKETPLACE_NAME = /^[a-z0-9][\w.-]*$/i
 
+// The names `claude plugin validate` rejects as passing for Anthropic's own,
+// as of Claude Code 2.1.309.
+const RESERVED = /^(?:claude|anthropics?)(?:-|$)|^cc-plugin-|(?:claude|anthropic)s?-?official|official-?(?:claude|anthropic)/
+
 // The entry lands inside double quotes in a shell command, so it may hold
 // nothing the shell expands there. No segment starts with a dot, so it stays
 // inside the plugin root, the only directory Claude Code copies.
@@ -64,8 +68,8 @@ export function claudePluginFiles(options: ClaudePluginOptions): Record<string, 
   const { plugin, version, description, author, homepage, repository, license, keywords, marketplace } = options
   const matcher = requireMatcher('claude', plugin)
   const entry = entryOf(options.entry)
-  if (/^(?:claude-|anthropic-|cc-plugin-)/.test(plugin.name))
-    throw new TypeError(`Claude Code reserves plugin names that start like ${plugin.name}`)
+  if (RESERVED.test(plugin.name))
+    throw new TypeError(`Claude Code reserves plugin names like ${plugin.name} for Anthropic's own; name it for what it does`)
   if (homepage !== undefined && !URL.canParse(homepage))
     throw new TypeError(`homepage ${JSON.stringify(homepage)} is not a URL`)
   const files: Record<string, string> = {

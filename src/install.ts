@@ -1,7 +1,7 @@
 import type { Agent, HookPlugin, Scope } from './types'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import process from 'node:process'
 import { AGENTS, requireMatcher } from './agents'
@@ -11,7 +11,7 @@ export interface UninstallOptions {
   plugin: HookPlugin
   agent: Agent
   scope: Scope
-  /** The built bin the hook runs; its file name tells this plugin's entries from others. */
+  /** The built bin the hook runs; its file name also picks out entries written before the stable copy existed. */
   script: string
   /** Holds the user-scope config and the stable copy of the build. */
   home: string
@@ -65,14 +65,15 @@ const QUOTED = String.raw`(?:[^']|'\\'')*`
 
 // The exact commands install writes, past and present, so a user hook that
 // merely mentions the plugin, or another plugin's hook, is never taken for
-// one. The bare `node '<path>' hook` form predates the pinned Node.js and the
-// copy, when the path was wherever the package sat; it is matched as loosely
-// as it was then. Commands written before `|| exit 2` lack it.
+// one. Anything under `~/.<name>/current/` is this plugin's own copy, so a
+// pinned entry is matched whatever its file name, and survives a renamed bin.
+// The bare `node '<path>' hook` form predates the pinned Node.js and the copy,
+// when the path was wherever the package sat; it needs a directory named
+// exactly after the plugin. Commands written before `|| exit 2` lack it.
 function ownHook(plugin: HookPlugin, entry: string): RegExp {
   const name = escape(plugin.name)
-  const file = escape(entry)
-  const pinned = String.raw`n='${QUOTED}'; \[ -x "\$n" \] \|\| n=node; "\$n" '${QUOTED}/\.${name}/current/${file}' hook`
-  const bare = `node '${QUOTED}${name}${QUOTED}/${file}' hook`
+  const pinned = String.raw`n='${QUOTED}'; \[ -x "\$n" \] \|\| n=node; "\$n" '${QUOTED}/\.${name}/current/[^/']+' hook`
+  const bare = `node '${QUOTED}/${name}/(?:${QUOTED}/)?${escape(entry)}' hook`
   const project = `npx --no-install ${escape(plugin.packageName)} hook`
   return new RegExp(`^(?:${pinned}|${bare}|${project})(?: \\|\\| exit 2)?$`)
 }
@@ -106,8 +107,9 @@ function copyBuild(plugin: HookPlugin, script: string, root: string): string {
     try {
       for (const name of builtFiles(source))
         copyFileSync(join(source, name), join(staging, name))
-      // A concurrent install of this build may have renamed its copy in while
-      // this one staged; that copy may already be in use, so it is kept.
+      // A directory here is either a concurrent install's finished copy of
+      // this build, which may already be in use and is kept, or one whose
+      // content no longer matches its name, which is moved aside and replaced.
       if (existsSync(target) && buildId(target) !== id)
         renameSync(target, `${staging}-stale`)
       if (!existsSync(target))
@@ -129,9 +131,10 @@ function copyBuild(plugin: HookPlugin, script: string, root: string): string {
 // Only the .mjs files beside the bin are copied, so a build that imports a
 // package from node_modules, or a file in a subdirectory, loads where it was
 // built and fails in the copy: the hook would then exit 1 on every call. The
-// copy runs once on an empty payload before anything points at it.
+// copy runs once before anything points at it, on a tool no kind covers, which
+// loads the whole build and passes without calling the check.
 function probe(file: string, node: string): void {
-  const ran = spawnSync(node, [file, 'hook'], { input: '{}', encoding: 'utf8', timeout: 10_000 })
+  const ran = spawnSync(node, [file, 'hook'], { input: '{"tool_name":"Read"}', encoding: 'utf8', timeout: 10_000 })
   if (ran.status === 0)
     return
   const why = ran.error?.message ?? ran.stderr.trim().split('\n').find(line => /error/i.test(line)) ?? `exit ${ran.status ?? ran.signal}`
@@ -185,21 +188,50 @@ function readSettings(file: string): Settings {
   return settings as Settings
 }
 
+// A write cut short would leave the user's whole config unreadable, so the text
+// goes to a sibling file renamed over it. The rename lands on a link's target,
+// so a config linked in from a dotfiles repository stays a link, and the file
+// keeps its mode.
+function writeConfig(file: string, text: string): void {
+  const real = existsSync(file) ? realpathSync(file) : file
+  mkdirSync(dirname(real), { recursive: true })
+  const temp = `${real}.${process.pid}.tmp`
+  try {
+    writeFileSync(temp, text)
+    if (existsSync(real))
+      chmodSync(temp, statSync(real).mode & 0o7777)
+    renameSync(temp, real)
+  }
+  finally {
+    rmSync(temp, { force: true })
+  }
+}
+
 // Drops any earlier entry of this plugin first, so installing twice or after a
 // move leaves exactly one hook pointing at the current build. Entries it does
-// not understand are kept as they are.
+// not understand are kept as they are. With nothing to add or remove the file
+// is not rewritten, so an uninstall that finds no hook keeps its formatting.
 function configure(file: string, settings: Settings, own: RegExp, entry: HookEntry | null): void {
   const hooks = settings.hooks ?? {}
-  const kept = (Array.isArray(hooks.PreToolUse) ? hooks.PreToolUse : [])
-    .map(item => Array.isArray(item?.hooks) ? { ...item, hooks: item.hooks.filter(hook => !(typeof hook?.command === 'string' && own.test(hook.command))) } : item)
+  const before = Array.isArray(hooks.PreToolUse) ? hooks.PreToolUse : []
+  let removed = 0
+  const kept = before
+    .map((item) => {
+      if (!Array.isArray(item?.hooks))
+        return item
+      const rest = item.hooks.filter(hook => !(typeof hook?.command === 'string' && own.test(hook.command)))
+      removed += item.hooks.length - rest.length
+      return { ...item, hooks: rest }
+    })
     .filter(item => !Array.isArray(item?.hooks) || item.hooks.length > 0)
+  if (!entry && removed === 0)
+    return
   if (entry)
     kept.push(entry)
   settings.hooks = { ...hooks, PreToolUse: kept }
   if (kept.length === 0)
     delete settings.hooks.PreToolUse
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`)
+  writeConfig(file, `${JSON.stringify(settings, null, 2)}\n`)
 }
 
 /**

@@ -72,7 +72,8 @@ describe('runHook', () => {
   })
 
   it('blocks a payload it cannot read instead of letting the call run', async () => {
-    for (const input of ['', '{"tool_name":', 'null', '[]', '"Bash"']) {
+    const unnamed = ['{}', '{"tool_name":""}', '{"tool_name":7}', '{"toolName":"Bash"}', JSON.stringify({ tool_input: { command: 'FORBIDDEN' } })]
+    for (const input of ['', '{"tool_name":', 'null', '[]', '"Bash"', ...unnamed]) {
       const { code, stderr } = await run(input)
       expect(code, input).toBe(2)
       expect(stderr, input).toMatch(/^Blocked by toy-guard, it could not check the call: /)
@@ -119,7 +120,6 @@ describe('runHook', () => {
       payload('apply_patch', { command: 'FORBIDDEN' }),
       payload('Read', { file_path: 'a.js' }),
       payload('constructor', {}),
-      JSON.stringify({ tool_input: { command: 'FORBIDDEN' } }),
     ]
     for (const input of others)
       expect(await run(input, plugin), input).toEqual({ code: 0, stderr: '' })

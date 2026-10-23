@@ -26,7 +26,7 @@ export interface CliIO {
 
 /** How the command names itself. */
 export interface CliOptions {
-  /** The command name in usage and error text. Defaults to the plugin's name. */
+  /** The command name in usage and error text, for a bin not named after the plugin. Defaults to the plugin's name. */
   bin?: string
 }
 
@@ -50,8 +50,9 @@ function usage(bin: string): string {
  * [--project]`, and `hook`, which reads the tool call from `io.stdin`.
  *
  * Exit codes: `hook` returns what {@link runHook} returns, 0 or 2. `install`
- * and `uninstall` return 0, or 1 with the reason on stderr. Anything else
- * prints the usage and returns 1. On a Node.js older than 22, `hook` returns 2
+ * and `uninstall` return 0, or 1 with the reason on stderr. Anything else,
+ * including an unknown flag or an extra argument, prints the usage and
+ * returns 1. On a Node.js older than 22, `hook` returns 2
  * and `install` 1, each with a message naming the fix; `uninstall` still runs.
  */
 export function createCli(plugin: HookPlugin, options: CliOptions = {}): CliMain {
@@ -65,13 +66,16 @@ export function createCli(plugin: HookPlugin, options: CliOptions = {}): CliMain
     // still runs.
     const major = Number(/^v(\d+)\./.exec(io.node)?.[1] ?? 0)
     if ((command === 'hook' || command === 'install') && major < 22) {
-      io.stderr(`${bin} needs Node.js 22 or later, and the node on PATH is ${io.node}. Run \`npx ${plugin.packageName} install claude\` (or codex) again with Node.js 22 or later, or put one first on PATH and restart the agent.\n`)
+      io.stderr(`${bin} needs Node.js 22 or later, and this one is ${io.node}. Run \`npx ${plugin.packageName} install claude\` (or codex) again with Node.js 22 or later, or put one first on PATH and restart the agent.\n`)
       return command === 'hook' ? 2 : 1
     }
     if (command === 'hook')
       return runHook(plugin, io.stdin(), { cwd: io.cwd, stderr: io.stderr })
-    if ((command === 'install' || command === 'uninstall') && isAgent(agent)) {
-      const place = { plugin, agent, scope: flags.includes('--project') ? 'project' as const : 'user' as const, script: io.script, home: io.home, cwd: io.cwd }
+    // A mistyped `--project` must not fall back to the user scope, which an
+    // uninstall would then remove the wrong hook from.
+    const project = flags.length === 1 && flags[0] === '--project'
+    if ((command === 'install' || command === 'uninstall') && isAgent(agent) && (flags.length === 0 || project)) {
+      const place = { plugin, agent, scope: project ? 'project' as const : 'user' as const, script: io.script, home: io.home, cwd: io.cwd }
       let file: string
       try {
         file = command === 'install' ? install({ ...place, execPath: io.execPath }).file : uninstall(place).file

@@ -1,4 +1,7 @@
-/** A kind of tool call a hook can ask to check. */
+/**
+ * What a hook declares it checks. Each kind selects the agents' tools that
+ * make that change, and is the `kind` of the {@link ToolCall} the check gets.
+ */
 export type ToolKind = 'shell' | 'write' | 'edit' | 'patch'
 
 /**
@@ -13,7 +16,7 @@ export type ToolCall
     | { kind: 'edit', path: string, before: string, after: string }
     | { kind: 'patch', patch: string }
 
-/** The calls of the given kinds. */
+/** What a check declared with kinds `K` receives: only the matching shapes of {@link ToolCall}. */
 export type ToolCallOf<K extends ToolKind> = Extract<ToolCall, { kind: K }>
 
 /**
@@ -70,7 +73,7 @@ export interface HookPlugin {
   readonly check: (call: ToolCall, context: HookContext) => HookVerdict | Promise<HookVerdict>
 }
 
-/** The agents a hook installs into. */
+/** `claude` installs into `.claude/settings.json`, `codex` into `.codex/hooks.json`. */
 export type Agent = 'claude' | 'codex'
 
 /** `user` writes the agent's config in the home directory, `project` the one in the working directory. */

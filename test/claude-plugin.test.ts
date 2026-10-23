@@ -76,7 +76,11 @@ describe('claudePluginFiles', () => {
     for (const entry of ['../cli.mjs', 'dist/../../cli.mjs', '/abs/cli.mjs', 'dist/cli.ts', 'dist/$(id).mjs', 'dist/"x".mjs', 'dist\\cli.mjs'])
       expect(() => claudePluginFiles({ ...options, entry }), entry).toThrow(/^entry /)
     expect(() => claudePluginFiles({ ...options, homepage: 'example.com' })).toThrow(/^homepage /)
-    expect(() => claudePluginFiles({ ...options, plugin: toyGuard(undefined, 'claude-guard') })).toThrow('reserves')
+    // Names `claude plugin validate` rejects, then two it accepts.
+    for (const name of ['claude-guard', 'anthropic-audit', 'anthropics', 'cc-plugin-x', 'claude', 'my-claude-official', 'official-claude-tools', 'claudeofficial', 'official-anthropics'])
+      expect(() => claudePluginFiles({ ...options, plugin: toyGuard(undefined, name) }), name).toThrow('reserves')
+    for (const name of ['tools-claude', 'x-anthropic-y-official'])
+      expect(() => claudePluginFiles({ ...options, plugin: toyGuard(undefined, name) }), name).not.toThrow()
     expect(() => claudePluginFiles({ ...options, marketplace: { name: 'my market', owner: { name: 'x' } } })).toThrow(/^marketplace name /)
   })
 })

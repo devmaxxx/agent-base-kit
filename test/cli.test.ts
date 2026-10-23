@@ -1,6 +1,6 @@
 import type { CliIO, HookPlugin } from '../src'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -83,12 +83,15 @@ describe('cli', () => {
       `node '/opt/shell-secrets/cli.mjs' hook`,
       `node '/usr/lib/node_modules/shell-secrets/dist/cli.mjs' hook || exit 2`,
       `n='/usr/bin/node'; [ -x "$n" ] || n=node; "$n" '/home/it'\\''s/.shell-secrets/current/cli.mjs' hook || exit 2`,
+      `n='/usr/bin/node'; [ -x "$n" ] || n=node; "$n" '/home/me/.shell-secrets/current/renamed.mjs' hook || exit 2`,
       'npx --no-install shell-secrets hook',
       'npx --no-install shell-secrets hook || exit 2',
     ]
     const others = [
       { matcher: 'Bash', hooks: [{ type: 'command', command: '/src/shell-secrets-audit/log.sh' }] },
       { matcher: 'Bash', hooks: [{ type: 'command', command: `node '/opt/shell-secrets-audit/log.mjs' hook` }] },
+      { matcher: 'Bash', hooks: [{ type: 'command', command: `node '/opt/not-shell-secrets/dist/cli.mjs' hook` }] },
+      { matcher: 'Bash', hooks: [{ type: 'command', command: `node '/opt/shell-secrets-audit/dist/cli.mjs' hook || exit 2` }] },
       { matcher: 'Bash', hooks: [{ type: 'command', command: 'npx --no-install shell-secrets-audit hook' }] },
       { matcher: 'Bash', hooks: [{ type: 'command', command: `n='/usr/bin/node'; [ -x "$n" ] || n=node; "$n" '/home/shell-secrets/.guard/current/cli.mjs' hook || exit 2` }] },
       { matcher: 'Bash' },
@@ -114,6 +117,44 @@ describe('cli', () => {
         expect(stdout, text).toBe('')
       }
       expect(readFileSync(file, 'utf8'), text).toBe(text)
+      expect(existsSync(join(where.home, '.toy-guard')), text).toBe(false)
+    }
+  })
+
+  it('leaves a config it has nothing to remove from exactly as it was', async () => {
+    const where = place()
+    const file = join(where.home, '.claude/settings.json')
+    mkdirSync(dirname(file))
+    for (const text of ['{"model":"x"}', '{"hooks":null}', '{ "hooks": { "PreToolUse": [{ "matcher": "Bash" }] } }']) {
+      writeFileSync(file, text)
+      expect(await run(['uninstall', 'claude'], where), text).toBe(0)
+      expect(readFileSync(file, 'utf8'), text).toBe(text)
+    }
+  })
+
+  it('writes through a linked config and keeps its mode', async () => {
+    const where = place()
+    const real = join(where.home, 'dotfiles/settings.json')
+    const file = join(where.home, '.claude/settings.json')
+    mkdirSync(dirname(real))
+    mkdirSync(dirname(file))
+    writeFileSync(real, '{"model":"x"}')
+    chmodSync(real, 0o600)
+    symlinkSync(real, file)
+    expect(await run(['install', 'claude'], where)).toBe(0)
+    expect(lstatSync(file).isSymbolicLink()).toBe(true)
+    expect(read(real)).toMatchObject({ model: 'x', hooks: { PreToolUse: [{ matcher: 'Bash|Write|Edit|MultiEdit|NotebookEdit' }] } })
+    expect(statSync(real).mode & 0o777).toBe(0o600)
+    expect(readdirSync(dirname(real))).toEqual(['settings.json'])
+  })
+
+  it('prints the usage for an unknown flag or an extra argument instead of picking a scope', async () => {
+    for (const args of [['install', 'claude', '--projet'], ['uninstall', 'codex', '--project', 'x'], ['install', 'claude', 'extra']]) {
+      const where = place()
+      expect(await run(args, where), args.join(' ')).toBe(1)
+      expect(stderr).toMatch(/^Usage:/)
+      expect(readdirSync(where.home), args.join(' ')).toEqual([])
+      expect(readdirSync(where.cwd), args.join(' ')).toEqual([])
     }
   })
 
