@@ -1,4 +1,6 @@
 export { matcherFor } from './agents'
+export { claudePluginFiles, writeClaudePlugin } from './claude-plugin'
+export type { ClaudePluginOptions, ClaudePluginPerson } from './claude-plugin'
 export { createCli, readStdin, runCli } from './cli'
 export type { CliIO, CliMain, CliOptions } from './cli'
 export { defineHook } from './define'
