@@ -1,0 +1,62 @@
+{
+  "name": "@devmaxxx/agent-toolkit",
+  "type": "module",
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.23.0",
+  "description": "Turn any check into a fail-closed PreToolUse hook for Claude Code and Codex: tool-call parsing, install and uninstall, a stable copy of the build, and Claude Code plugin files. Zero dependencies.",
+  "author": "devmaxxx",
+  "license": "MIT",
+  "homepage": "https://github.com/devmaxxx/agent-toolkit#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/devmaxxx/agent-toolkit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/devmaxxx/agent-toolkit/issues"
+  },
+  "keywords": [
+    "ai-agent",
+    "claude-code",
+    "claude-code-plugin",
+    "codex",
+    "hook",
+    "pretooluse",
+    "guard",
+    "policy",
+    "security"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/index.d.mts",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "lint": "eslint .",
+    "typecheck": "tsc",
+    "test": "vitest run",
+    "prepublishOnly": "pnpm run build"
+  },
+  "devDependencies": {
+    "@antfu/eslint-config": "^9.5.1",
+    "@types/node": "^26.6.5",
+    "eslint": "^10.13.0",
+    "publint": "^0.3.25",
+    "tsdown": "^0.23.1",
+    "typescript": "^6.0.3",
+    "unrun": "^0.3.1",
+    "vitest": "^5.0.5"
+  }
+}
