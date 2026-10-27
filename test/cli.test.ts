@@ -134,7 +134,7 @@ describe('cli', () => {
 
     // Without the pattern the same entry belongs to some other hook.
     seed()
-    await run(['uninstall', 'claude'], where, { plugin: toyGuard(['shell'], 'policy-guard') })
+    expect(await run(['uninstall', 'claude'], where, { plugin: toyGuard(['shell'], 'policy-guard') })).toBe(0)
     expect(entries(file)).toHaveLength(others.length + 1)
 
     // A pattern that matches only part of a command takes none of them.
