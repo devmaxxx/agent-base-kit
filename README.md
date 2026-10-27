@@ -2,17 +2,17 @@
 
 <img src="docs/assets/logo.svg" width="96" height="96" alt="">
 
-# agent-kit
+# agent-base-kit
 
 **Turn any check into a fail-closed PreToolUse hook for Claude Code and Codex. One function in, a verdict out. Zero dependencies.**
 
-[![npm version](https://img.shields.io/npm/v/agent-kit?color=cb3837)](https://www.npmjs.com/package/agent-kit)
-[![npm downloads](https://img.shields.io/npm/dm/agent-kit)](https://www.npmjs.com/package/agent-kit)
+[![npm version](https://img.shields.io/npm/v/agent-base-kit?color=cb3837)](https://www.npmjs.com/package/agent-base-kit)
+[![npm downloads](https://img.shields.io/npm/dm/agent-base-kit)](https://www.npmjs.com/package/agent-base-kit)
 [![CI](https://github.com/devmaxxx/agent-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/devmaxxx/agent-kit/actions/workflows/ci.yml)
-[![types](https://img.shields.io/npm/types/agent-kit)](https://www.npmjs.com/package/agent-kit)
+[![types](https://img.shields.io/npm/types/agent-base-kit)](https://www.npmjs.com/package/agent-base-kit)
 [![zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)](./package.json)
-[![node](https://img.shields.io/node/v/agent-kit)](./package.json)
-[![license: MIT](https://img.shields.io/npm/l/agent-kit)](./LICENSE)
+[![node](https://img.shields.io/node/v/agent-base-kit)](./package.json)
+[![license: MIT](https://img.shields.io/npm/l/agent-base-kit)](./LICENSE)
 
 [Install](#install) · [Quick start](#quick-start) · [Kinds](#kinds-and-matchers) · [Fail-closed](#the-fail-closed-contract) · [Install layout](#what-install-writes) · [Claude Code plugin](#shipping-as-a-claude-code-plugin) · [API](#api)
 
@@ -41,7 +41,7 @@
 
 A [PreToolUse hook](https://code.claude.com/docs/en/hooks) is the last point where you can stop an agent's tool call before it runs. Writing one well is mostly not about the check. The agents treat every exit except 2 as "go on", so a hook that crashes, cannot parse its input, or loses its Node.js after an upgrade lets every call through without a word.
 
-agent-kit is that plumbing, extracted from [shell-secrets](https://github.com/devmaxxx/shell-secrets). You write the check; it makes sure the check actually runs, and blocks when it cannot.
+agent-base-kit is that plumbing, for any guard you build. You write the check; it makes sure the check actually runs, and blocks when it cannot.
 
 ## Features
 
@@ -56,8 +56,8 @@ agent-kit is that plumbing, extracted from [shell-secrets](https://github.com/de
 ## Install
 
 ```sh
-pnpm add -D agent-kit
-# or: npm i -D agent-kit · yarn add -D agent-kit · bun add -d agent-kit
+pnpm add -D agent-base-kit
+# or: npm i -D agent-base-kit · yarn add -D agent-base-kit · bun add -d agent-base-kit
 ```
 
 Requires Node.js 22 or later and a POSIX shell. It goes in `devDependencies`; [here is why](#why-a-devdependency).
@@ -68,7 +68,7 @@ A toy check that stops force pushes, as a plugin in three files:
 
 ```ts
 // src/plugin.ts
-import { defineHook } from 'agent-kit'
+import { defineHook } from 'agent-base-kit'
 
 export const plugin = defineHook({
   name: 'no-force-push',
@@ -83,7 +83,7 @@ export const plugin = defineHook({
 ```ts
 #!/usr/bin/env node
 // src/cli.ts
-import { runCli } from 'agent-kit'
+import { runCli } from 'agent-base-kit'
 import { plugin } from './plugin'
 
 void runCli(plugin, import.meta.url)
@@ -98,7 +98,7 @@ void runCli(plugin, import.meta.url)
   "files": ["dist"],
   "engines": { "node": ">=22" },
   "devDependencies": {
-    "agent-kit": "^0.1.0",
+    "agent-base-kit": "^0.1.0",
     "tsdown": "^0.23.1"
   }
 }
@@ -115,7 +115,7 @@ npx no-force-push hook                      # what the agent runs, with the tool
 
 ### Why a devDependency
 
-A user-scope install copies the `.mjs` files next to your bin into `~/.<name>/<build-id>/` and runs them from there. A runtime dependency would be imported from `node_modules`, and the copy has none. List agent-kit under `devDependencies` instead, and tsdown bundles it into your build. It also inlines its types into your `.d.mts`, so `export type { ToolCall } from 'agent-kit'` works for your users. If the copy cannot start anyway, `install` refuses and says why. It runs the copy once before writing any config.
+A user-scope install copies the `.mjs` files next to your bin into `~/.<name>/<build-id>/` and runs them from there. A runtime dependency would be imported from `node_modules`, and the copy has none. List agent-base-kit under `devDependencies` instead, and tsdown bundles it into your build. It also inlines its types into your `.d.mts`, so `export type { ToolCall } from 'agent-base-kit'` works for your users. If the copy cannot start anyway, `install` refuses and says why. It runs the copy once before writing any config.
 
 ## Kinds and matchers
 
@@ -183,7 +183,7 @@ A Claude Code plugin needs no install step and no copy, because Claude Code keep
 
 ```ts
 // tsdown.config.ts
-import { writeClaudePlugin } from 'agent-kit'
+import { writeClaudePlugin } from 'agent-base-kit'
 import { defineConfig } from 'tsdown'
 import pkg from './package.json' with { type: 'json' }
 import { plugin } from './src/plugin'

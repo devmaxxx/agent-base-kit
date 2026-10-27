@@ -78,22 +78,22 @@ describe('cli', () => {
   it('replaces every command form an earlier install wrote, and only those', async () => {
     const where = place()
     const file = join(where.home, '.claude/settings.json')
-    const plugin = toyGuard(undefined, 'shell-secrets')
+    const plugin = toyGuard(undefined, 'policy-guard')
     const own = [
-      `node '/opt/shell-secrets/cli.mjs' hook`,
-      `node '/usr/lib/node_modules/shell-secrets/dist/cli.mjs' hook || exit 2`,
-      `n='/usr/bin/node'; [ -x "$n" ] || n=node; "$n" '/home/it'\\''s/.shell-secrets/current/cli.mjs' hook || exit 2`,
-      `n='/usr/bin/node'; [ -x "$n" ] || n=node; "$n" '/home/me/.shell-secrets/current/renamed.mjs' hook || exit 2`,
-      'npx --no-install shell-secrets hook',
-      'npx --no-install shell-secrets hook || exit 2',
+      `node '/opt/policy-guard/cli.mjs' hook`,
+      `node '/usr/lib/node_modules/policy-guard/dist/cli.mjs' hook || exit 2`,
+      `n='/usr/bin/node'; [ -x "$n" ] || n=node; "$n" '/home/it'\\''s/.policy-guard/current/cli.mjs' hook || exit 2`,
+      `n='/usr/bin/node'; [ -x "$n" ] || n=node; "$n" '/home/me/.policy-guard/current/renamed.mjs' hook || exit 2`,
+      'npx --no-install policy-guard hook',
+      'npx --no-install policy-guard hook || exit 2',
     ]
     const others = [
-      { matcher: 'Bash', hooks: [{ type: 'command', command: '/src/shell-secrets-audit/log.sh' }] },
-      { matcher: 'Bash', hooks: [{ type: 'command', command: `node '/opt/shell-secrets-audit/log.mjs' hook` }] },
-      { matcher: 'Bash', hooks: [{ type: 'command', command: `node '/opt/not-shell-secrets/dist/cli.mjs' hook` }] },
-      { matcher: 'Bash', hooks: [{ type: 'command', command: `node '/opt/shell-secrets-audit/dist/cli.mjs' hook || exit 2` }] },
-      { matcher: 'Bash', hooks: [{ type: 'command', command: 'npx --no-install shell-secrets-audit hook' }] },
-      { matcher: 'Bash', hooks: [{ type: 'command', command: `n='/usr/bin/node'; [ -x "$n" ] || n=node; "$n" '/home/shell-secrets/.guard/current/cli.mjs' hook || exit 2` }] },
+      { matcher: 'Bash', hooks: [{ type: 'command', command: '/src/policy-guard-audit/log.sh' }] },
+      { matcher: 'Bash', hooks: [{ type: 'command', command: `node '/opt/policy-guard-audit/log.mjs' hook` }] },
+      { matcher: 'Bash', hooks: [{ type: 'command', command: `node '/opt/not-policy-guard/dist/cli.mjs' hook` }] },
+      { matcher: 'Bash', hooks: [{ type: 'command', command: `node '/opt/policy-guard-audit/dist/cli.mjs' hook || exit 2` }] },
+      { matcher: 'Bash', hooks: [{ type: 'command', command: 'npx --no-install policy-guard-audit hook' }] },
+      { matcher: 'Bash', hooks: [{ type: 'command', command: `n='/usr/bin/node'; [ -x "$n" ] || n=node; "$n" '/home/policy-guard/.guard/current/cli.mjs' hook || exit 2` }] },
       { matcher: 'Bash' },
       { matcher: 'Bash', hooks: [{ type: 'prompt', prompt: 'safe?' }] },
     ]
