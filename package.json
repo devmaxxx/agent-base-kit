@@ -1,7 +1,7 @@
 {
   "name": "agent-base-kit",
   "type": "module",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "packageManager": "pnpm@10.23.0",
   "description": "The base kit for Claude Code and Codex hooks: typed tool calls, a fail-closed runner, install and uninstall with a stable copy of the build, and Claude Code plugin files. Zero dependencies.",
   "author": "devmaxxx",
