@@ -1,22 +1,74 @@
-# @devmaxxx/agent-toolkit
+<div align="center">
 
-Turn any check into a PreToolUse hook for [Claude Code](https://code.claude.com/docs/en/hooks) and Codex. You write one function that sees a tool call and returns a verdict. The toolkit handles the rest:
+<img src="docs/assets/logo.svg" width="96" height="96" alt="">
 
-- reads the agent's payload and maps each tool to a typed call;
-- fails closed on anything it cannot read;
-- installs and uninstalls the hook in either agent's config, user or project scope;
-- keeps a stable copy of your build, so a Node.js upgrade does not silently switch the hook off;
-- writes the files that make your package a Claude Code plugin.
+# agent-kit
 
-The toolkit has no runtime dependencies, ships as ESM only, and needs Node.js 22 or later. It is the hook layer extracted from [shell-secrets](https://github.com/devmaxxx/shell-secrets).
+**Turn any check into a fail-closed PreToolUse hook for Claude Code and Codex. One function in, a verdict out. Zero dependencies.**
 
-## A plugin in three files
+[![npm version](https://img.shields.io/npm/v/agent-kit?color=cb3837)](https://www.npmjs.com/package/agent-kit)
+[![npm downloads](https://img.shields.io/npm/dm/agent-kit)](https://www.npmjs.com/package/agent-kit)
+[![CI](https://github.com/devmaxxx/agent-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/devmaxxx/agent-kit/actions/workflows/ci.yml)
+[![types](https://img.shields.io/npm/types/agent-kit)](https://www.npmjs.com/package/agent-kit)
+[![zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)](./package.json)
+[![node](https://img.shields.io/node/v/agent-kit)](./package.json)
+[![license: MIT](https://img.shields.io/npm/l/agent-kit)](./LICENSE)
 
-A toy check that stops force pushes:
+[Install](#install) · [Quick start](#quick-start) · [Kinds](#kinds-and-matchers) · [Fail-closed](#the-fail-closed-contract) · [Install layout](#what-install-writes) · [Claude Code plugin](#shipping-as-a-claude-code-plugin) · [API](#api)
+
+</div>
+
+<details>
+<summary><b>Table of contents</b></summary>
+
+- [Why](#why)
+- [Features](#features)
+- [Install](#install)
+- [Quick start](#quick-start)
+  - [Why a devDependency](#why-a-devdependency)
+- [Kinds and matchers](#kinds-and-matchers)
+- [The fail-closed contract](#the-fail-closed-contract)
+- [What install writes](#what-install-writes)
+- [Shipping as a Claude Code plugin](#shipping-as-a-claude-code-plugin)
+- [API](#api)
+- [Design notes](#design-notes)
+- [Contributing](#contributing)
+- [License](#license)
+
+</details>
+
+## Why
+
+A [PreToolUse hook](https://code.claude.com/docs/en/hooks) is the last point where you can stop an agent's tool call before it runs. Writing one well is mostly not about the check. The agents treat every exit except 2 as "go on", so a hook that crashes, cannot parse its input, or loses its Node.js after an upgrade lets every call through without a word.
+
+agent-kit is that plumbing, extracted from [shell-secrets](https://github.com/devmaxxx/shell-secrets). You write the check; it makes sure the check actually runs, and blocks when it cannot.
+
+## Features
+
+- **One function.** `check(call)` gets a typed call (`shell`, `write`, `edit` or `patch`) and returns `{ block, reason }`. Sync or async.
+- **Fails closed.** Unreadable payloads, throws, bad verdicts, hangs and a hook that cannot start all block.
+- **Both agents.** Claude Code and Codex, user or project scope, with matchers derived from the kinds you list.
+- **Survives upgrades.** A user install runs its own copy of your build on the Node.js that installed it, so an nvm or Homebrew upgrade does not silently switch it off.
+- **Plays well with other hooks.** Install and uninstall touch only their own entry and refuse a config they cannot extend safely.
+- **Claude Code plugin files.** One call writes the manifest, `hooks.json` and a marketplace.
+- **Zero dependencies**, ESM only, typed.
+
+## Install
+
+```sh
+pnpm add -D agent-kit
+# or: npm i -D agent-kit · yarn add -D agent-kit · bun add -d agent-kit
+```
+
+Requires Node.js 22 or later and a POSIX shell. It goes in `devDependencies`; [here is why](#why-a-devdependency).
+
+## Quick start
+
+A toy check that stops force pushes, as a plugin in three files:
 
 ```ts
 // src/plugin.ts
-import { defineHook } from '@devmaxxx/agent-toolkit'
+import { defineHook } from 'agent-kit'
 
 export const plugin = defineHook({
   name: 'no-force-push',
@@ -31,7 +83,7 @@ export const plugin = defineHook({
 ```ts
 #!/usr/bin/env node
 // src/cli.ts
-import { runCli } from '@devmaxxx/agent-toolkit'
+import { runCli } from 'agent-kit'
 import { plugin } from './plugin'
 
 void runCli(plugin, import.meta.url)
@@ -46,7 +98,7 @@ void runCli(plugin, import.meta.url)
   "files": ["dist"],
   "engines": { "node": ">=22" },
   "devDependencies": {
-    "@devmaxxx/agent-toolkit": "^0.1.0",
+    "agent-kit": "^0.1.0",
     "tsdown": "^0.23.1"
   }
 }
@@ -63,7 +115,7 @@ npx no-force-push hook                      # what the agent runs, with the tool
 
 ### Why a devDependency
 
-A user-scope install copies the `.mjs` files next to your bin into `~/.<name>/<build-id>/` and runs them from there. A runtime dependency would be imported from `node_modules`, and the copy has none. List the toolkit under `devDependencies` instead, and tsdown bundles it into your build. It also inlines its types into your `.d.mts`, so `export type { ToolCall } from '@devmaxxx/agent-toolkit'` works for your users. If the copy cannot start anyway, `install` refuses and says why. It runs the copy once before writing any config.
+A user-scope install copies the `.mjs` files next to your bin into `~/.<name>/<build-id>/` and runs them from there. A runtime dependency would be imported from `node_modules`, and the copy has none. List agent-kit under `devDependencies` instead, and tsdown bundles it into your build. It also inlines its types into your `.d.mts`, so `export type { ToolCall } from 'agent-kit'` works for your users. If the copy cannot start anyway, `install` refuses and says why. It runs the copy once before writing any config.
 
 ## Kinds and matchers
 
@@ -131,7 +183,7 @@ A Claude Code plugin needs no install step and no copy, because Claude Code keep
 
 ```ts
 // tsdown.config.ts
-import { writeClaudePlugin } from '@devmaxxx/agent-toolkit'
+import { writeClaudePlugin } from 'agent-kit'
 import { defineConfig } from 'tsdown'
 import pkg from './package.json' with { type: 'json' }
 import { plugin } from './src/plugin'
@@ -191,6 +243,17 @@ function writeClaudePlugin(dir: string, options: ClaudePluginOptions): string[]
 - **The reason is printed as is.** Your plugin owns its message, so start it with the plugin's name. Errors get a `Blocked by <name>, it could not check the call: …` prefix.
 - **Which entries count as its own.** The `npx` form must match exactly. The pinned form matches any file under `~/.<name>/current/`, so a bin renamed between releases still replaces its old entry. The bare `node '<path>' hook` form from before the copy existed needs a directory named exactly after the plugin. So a hook that only mentions the plugin, or another plugin whose path merely contains this one's name, is never removed.
 - **POSIX shells only.** Hook commands rely on `|| exit 2` and single-quoted paths, so Windows is not supported yet.
+
+## Contributing
+
+Issues and pull requests are welcome.
+
+```sh
+git clone https://github.com/devmaxxx/agent-kit.git
+cd agent-kit
+pnpm install
+pnpm lint && pnpm typecheck && pnpm test
+```
 
 ## License
 

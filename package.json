@@ -1,18 +1,18 @@
 {
-  "name": "@devmaxxx/agent-toolkit",
+  "name": "agent-kit",
   "type": "module",
   "version": "0.1.0",
   "packageManager": "pnpm@10.23.0",
   "description": "Turn any check into a fail-closed PreToolUse hook for Claude Code and Codex: tool-call parsing, install and uninstall, a stable copy of the build, and Claude Code plugin files. Zero dependencies.",
   "author": "devmaxxx",
   "license": "MIT",
-  "homepage": "https://github.com/devmaxxx/agent-toolkit#readme",
+  "homepage": "https://github.com/devmaxxx/agent-kit#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/devmaxxx/agent-toolkit.git"
+    "url": "git+https://github.com/devmaxxx/agent-kit.git"
   },
   "bugs": {
-    "url": "https://github.com/devmaxxx/agent-toolkit/issues"
+    "url": "https://github.com/devmaxxx/agent-kit/issues"
   },
   "keywords": [
     "ai-agent",
