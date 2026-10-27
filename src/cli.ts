@@ -43,18 +43,23 @@ interface HookArgs {
 
 // What `hook` is told on its command line. A bad argument is a fault, not a
 // usage error: the agent reads the exit as the event's, so it must still be 2
-// at PreToolUse and 0 at an event that passes on a fault, and an `--event`
-// read before the bad argument still decides which.
+// at PreToolUse and 0 at an event that passes on a fault. The first valid
+// `--event` decides which wherever it stands, since a bad argument before it
+// shifts the pairs; with none, the payload's event does.
 function hookArgs(args: readonly string[]): HookArgs {
   const parsed: HookArgs = {}
   for (let i = 0; i < args.length; i += 2) {
     const [flag, value] = [args[i], args[i + 1]]
-    if (flag === '--event' && isEvent(value) && parsed.event === undefined)
+    if (flag === '--event' && isEvent(value) && parsed.event === undefined) {
       parsed.event = value
-    else if (flag === '--agent' && isAgent(value) && parsed.agent === undefined)
+    }
+    else if (flag === '--agent' && isAgent(value) && parsed.agent === undefined) {
       parsed.agent = value
-    else
-      return { ...parsed, error: `${[flag, value].filter(word => word !== undefined).join(' ')} is not an argument hook takes` }
+    }
+    else {
+      const named = args.find((word, at) => args[at - 1] === '--event' && isEvent(word))
+      return { ...parsed, event: parsed.event ?? (isEvent(named) ? named : undefined), error: `${[flag, value].filter(word => word !== undefined).join(' ')} is not an argument hook takes` }
+    }
   }
   return parsed
 }

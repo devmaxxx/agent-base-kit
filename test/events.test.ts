@@ -367,6 +367,10 @@ describe('install with events', () => {
       [['--event', 'stop'], call, 2],
       [['--event', 'stop'], prompt, 0],
       [['--agent', 'claude', 'extra'], call, 2],
+      // A bad argument before --event shifts the pairs; the event still decides.
+      [['--verbose', '--event', 'Stop'], TRUNCATED, 0],
+      [['--event=Stop', '--event', 'UserPromptSubmit'], call, 0],
+      [['--verbose', '--event', 'PreToolUse'], prompt, 2],
     ] as const) {
       expect(await run(['hook', ...args], where, { stdin: () => input }), `${args.join(' ')} ${input}`).toBe(code)
       expect(stderr).toMatch(/is not an argument hook takes\n$/)

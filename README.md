@@ -103,7 +103,7 @@ The hook exits 0 only when your check passes the call:
 | `check` throws, rejects, never settles, or returns anything else | 2 |
 | The payload is not JSON, names no tool, has a field of the wrong shape, or names an event other than PreToolUse, Stop or UserPromptSubmit | 2 |
 | The command says `--event PreToolUse` and the payload names another event | 2 |
-| The command has an argument `hook` does not take | 2, or 0 when `--event` names Stop or UserPromptSubmit |
+| The command has an argument `hook` does not take | 2, or 0 when its first valid `--event` names Stop or UserPromptSubmit or, with none, the payload does |
 | The tool is not one of your kinds or `tools` | 0, and `check` is not called |
 | The hook cannot start: Node.js is missing, the build was deleted, a dependency was not bundled | 2, from `\|\| exit 2` |
 | The hook runs on a Node.js older than 22 | 2, with a message naming the fix |
