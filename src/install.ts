@@ -199,15 +199,23 @@ function linkCurrent(root: string, id: string): string {
 // Every entry already installed, for this agent and the other, runs the build
 // `current` names, so an install that fails after swapping it puts it back:
 // otherwise a failed upgrade would still upgrade the hooks it left in place.
-function restoreCurrent(root: string): () => void {
-  let previous: string | null = null
-  try {
-    previous = readlinkSync(join(root, 'current'))
+// A link another install has moved since is that install's, and stays.
+function restoreCurrent(root: string, id: string): () => void {
+  const current = join(root, 'current')
+  const target = (): string | null => {
+    try {
+      return readlinkSync(current)
+    }
+    catch {
+      return null
+    }
   }
-  catch {}
+  const previous = target()
   return () => {
+    if (target() !== id)
+      return
     if (previous === null)
-      rmSync(join(root, 'current'), { force: true })
+      rmSync(current, { force: true })
     else
       linkCurrent(root, previous)
   }
@@ -357,7 +365,7 @@ export function install(options: InstallOptions): InstallResult {
     const root = join(options.home, `.${plugin.name}`)
     const id = copyBuild(plugin, script, root)
     probe(join(root, id, basename(script)), options.execPath)
-    restore = restoreCurrent(root)
+    restore = restoreCurrent(root, id)
     target = join(linkCurrent(root, id), basename(script))
   }
   const entries = entriesFor(plugin, agent, hookCommand(plugin, scope, target, options.execPath))
@@ -367,7 +375,11 @@ export function install(options: InstallOptions): InstallResult {
     lines = withExtra(file, place, () => configure(file, settings, ownHook(plugin, basename(script)), entries), plugin.onInstall)
   }
   catch (error) {
-    restore()
+    // The reason the install failed matters more than a link left behind.
+    try {
+      restore()
+    }
+    catch {}
     throw error
   }
   const commands = Object.fromEntries(Object.entries(entries).map(([event, entry]) => [event, entry.hooks![0]!.command as string]))

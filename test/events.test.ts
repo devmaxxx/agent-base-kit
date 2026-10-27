@@ -1,6 +1,6 @@
 import type { CliIO, HookDefinition, HookPlugin, InstallPlace, ToolCall, ToolKind } from '../src'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { claudePluginFiles, createCli, defineHook, runHook } from '../src'
@@ -361,6 +361,13 @@ describe('install steps', () => {
     const installed = readlinkSync(current)
     expect(await install(failing, fakeBuild('new'))).toBe(1)
     expect(readlinkSync(current)).toBe(installed)
+    const raced = guard({ onInstall: () => {
+      rmSync(current)
+      symlinkSync('other-install', current)
+      throw new Error('no skill source')
+    } })
+    expect(await install(raced, fakeBuild('newer'))).toBe(1)
+    expect(readlinkSync(current)).toBe('other-install')
   })
 })
 
