@@ -255,14 +255,24 @@ function readSettings(file: string): Settings {
 // goes to a sibling file renamed over it. The rename lands on a link's target,
 // so a config linked in from a dotfiles repository stays a link, and the file
 // keeps its mode.
+//
+// The sibling is created with that mode, not chmodded to it after the write: a
+// settings file kept at 0600 can hold tokens, and a sibling created at the
+// default would hold them world-readable until the chmod. A mode only applies
+// to a file the call creates, so a sibling left by a killed run goes first. A
+// new config gets the default every other tool gives one, 0666 less the umask.
 function writeConfig(file: string, text: string): void {
   const real = existsSync(file) ? realpathSync(file) : file
   mkdirSync(dirname(real), { recursive: true })
   const temp = `${real}.${process.pid}.tmp`
+  const mode = existsSync(real) ? statSync(real).mode & 0o7777 : undefined
   try {
-    writeFileSync(temp, text)
-    if (existsSync(real))
-      chmodSync(temp, statSync(real).mode & 0o7777)
+    rmSync(temp, { force: true })
+    writeFileSync(temp, text, { mode: mode ?? 0o666, flag: 'wx' })
+    // The umask can only have narrowed the mode, and an existing file keeps
+    // its own exactly.
+    if (mode !== undefined)
+      chmodSync(temp, mode)
     renameSync(temp, real)
   }
   finally {
