@@ -6,13 +6,13 @@
   "description": "Turn any check into a fail-closed PreToolUse hook for Claude Code and Codex: tool-call parsing, install and uninstall, a stable copy of the build, and Claude Code plugin files. Zero dependencies.",
   "author": "devmaxxx",
   "license": "MIT",
-  "homepage": "https://github.com/devmaxxx/agent-kit#readme",
+  "homepage": "https://github.com/devmaxxx/agent-base-kit#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/devmaxxx/agent-kit.git"
+    "url": "git+https://github.com/devmaxxx/agent-base-kit.git"
   },
   "bugs": {
-    "url": "https://github.com/devmaxxx/agent-kit/issues"
+    "url": "https://github.com/devmaxxx/agent-base-kit/issues"
   },
   "keywords": [
     "ai-agent",

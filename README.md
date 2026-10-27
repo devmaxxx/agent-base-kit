@@ -8,7 +8,7 @@
 
 [![npm version](https://img.shields.io/npm/v/agent-base-kit?color=cb3837)](https://www.npmjs.com/package/agent-base-kit)
 [![npm downloads](https://img.shields.io/npm/dm/agent-base-kit)](https://www.npmjs.com/package/agent-base-kit)
-[![CI](https://github.com/devmaxxx/agent-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/devmaxxx/agent-kit/actions/workflows/ci.yml)
+[![CI](https://github.com/devmaxxx/agent-base-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/devmaxxx/agent-base-kit/actions/workflows/ci.yml)
 [![types](https://img.shields.io/npm/types/agent-base-kit)](https://www.npmjs.com/package/agent-base-kit)
 [![zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)](./package.json)
 [![node](https://img.shields.io/node/v/agent-base-kit)](./package.json)
@@ -249,8 +249,8 @@ function writeClaudePlugin(dir: string, options: ClaudePluginOptions): string[]
 Issues and pull requests are welcome.
 
 ```sh
-git clone https://github.com/devmaxxx/agent-kit.git
-cd agent-kit
+git clone https://github.com/devmaxxx/agent-base-kit.git
+cd agent-base-kit
 pnpm install
 pnpm lint && pnpm typecheck && pnpm test
 ```
