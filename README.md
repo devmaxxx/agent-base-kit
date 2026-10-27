@@ -4,7 +4,7 @@
 
 # agent-base-kit
 
-**The base kit for Claude Code and Codex hooks: typed tool calls, install and uninstall, and Claude Code plugin files.**
+**The base kit for Claude Code and Codex hooks.**
 
 [![npm version](https://img.shields.io/npm/v/agent-base-kit?color=cb3837)](https://www.npmjs.com/package/agent-base-kit)
 [![npm downloads](https://img.shields.io/npm/dm/agent-base-kit)](https://www.npmjs.com/package/agent-base-kit)
