@@ -99,7 +99,7 @@ The hook exits 0 only when your check passes the call:
 | `check` returns `{ block: false }` | 0 |
 | `check` returns `{ block: true, reason }` (the reason goes to stderr as is) | 2 |
 | `check` throws, rejects, never settles, or returns anything else | 2 |
-| The payload is not JSON, names no tool, or has a field of the wrong shape | 2 |
+| The payload is not JSON, names no tool, has a field of the wrong shape, or names an event other than PreToolUse, Stop or UserPromptSubmit | 2 |
 | The tool is not one of your kinds or `tools` | 0, and `check` is not called |
 | The hook cannot start: Node.js is missing, the build was deleted, a dependency was not bundled | 2, from `\|\| exit 2` |
 | The hook runs on a Node.js older than 22 | 2, with a message naming the fix |
@@ -155,7 +155,7 @@ A block goes to stdout as `{"decision":"block","reason":…}`. At Stop the agent
 | A Stop payload with `stop_hook_active`, the reply to the hook's own block | 0, and `check` is not called |
 | The hook cannot start, or runs on a Node.js older than 22 | anything but 2: the event passes |
 
-Each event takes its own `statusMessage` and `timeout`, defaulting to the hook's. A payload with no `hook_event_name` is read as PreToolUse.
+Each event takes its own `statusMessage` and `timeout`, defaulting to the hook's. A payload with no `hook_event_name` is read as PreToolUse; one naming any other event (`PostToolUse`, `pre_tool_use`, an empty string) is blocked with exit 2, since the tool call it may carry would otherwise run unchecked.
 
 ## API
 

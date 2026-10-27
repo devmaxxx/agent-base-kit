@@ -155,7 +155,9 @@ async function runOpenEvent(plugin: HookPlugin, event: OpenEvent, payload: Recor
  * all return 2 with the error on stderr, because any other exit lets the call
  * run unchecked. A tool the plugin did not ask for returns 0 without calling
  * the check. A MultiEdit calls the check once per edit and blocks on the first
- * edit it blocks. A payload with no `hook_event_name` is read as PreToolUse.
+ * edit it blocks. A payload with no `hook_event_name` is read as PreToolUse;
+ * one naming any event other than PreToolUse, Stop or UserPromptSubmit, or
+ * a `hook_event_name` that is not a string, returns 2.
  *
  * Stop and UserPromptSubmit always return 0. A block goes to stdout as
  * `{"decision":"block","reason":…}`, and a fault to stderr, letting the event
@@ -173,10 +175,12 @@ export async function runHook(plugin: HookPlugin, stdin: string, options: RunHoo
     const open = OPEN_EVENTS.find(name => name === event)
     if (open)
       return runOpenEvent(plugin, open, payload, options)
-    // An event the plugin never installed for, such as PostToolUse, has
-    // nothing to block.
-    if (typeof event === 'string' && event !== 'PreToolUse')
-      return 0
+    // Install writes only PreToolUse and the open events, so any other name
+    // (a misspelling, another case, an event a later agent adds) is a payload
+    // this does not know, and passing it would let the call it carries run.
+    // Only an absent name reads as PreToolUse, the one event every hook has.
+    if (event !== undefined && event !== 'PreToolUse')
+      throw new TypeError(`hook_event_name ${JSON.stringify(event)} is not an event the hook runs`)
     // Both agents always name the tool, so a payload without one is a shape
     // this does not know, and reading it as some other tool would let it run.
     const tool = payload.tool_name

@@ -102,15 +102,30 @@ describe('a UserPromptSubmit check', () => {
 })
 
 describe('events the plugin does not check', () => {
-  it('pass Stop and UserPromptSubmit, and any event other than PreToolUse, unchecked', async () => {
+  it('pass Stop and UserPromptSubmit unchecked', async () => {
     const plain = guard({ events: {} })
-    for (const input of [event('Stop', { last_assistant_message: 'FORBIDDEN' }), event('UserPromptSubmit', { prompt: 'FORBIDDEN' }), event('PostToolUse', { tool_name: 'Bash', tool_input: { command: 'FORBIDDEN' } })])
+    for (const input of [event('Stop', { last_assistant_message: 'FORBIDDEN' }), event('UserPromptSubmit', { prompt: 'FORBIDDEN' })])
       expect(await hook(plain, input), input).toEqual({ code: 0, stdout: '', stderr: '' })
   })
 
-  it('still read a payload naming PreToolUse, or no event, as a tool call that fails closed', async () => {
+  it('block any other event name, before the tool is read, even when the call would pass', async () => {
+    let called = false
+    const plugin = guard({ check: () => {
+      called = true
+      return { block: false }
+    } })
+    for (const name of ['pre_tool_use', 'pretooluse', '', 'PostToolUse', null, 7]) {
+      const input = JSON.stringify({ hook_event_name: name, tool_name: 'Bash', tool_input: { command: 'ls' } })
+      expect(await hook(plugin, input), input).toEqual({ code: 2, stdout: '', stderr: `Blocked by guard, it could not check the call: hook_event_name ${JSON.stringify(name)} is not an event the hook runs\n` })
+    }
+    expect(called).toBe(false)
+  })
+
+  it('read a payload naming PreToolUse, or no event at all, as a tool call that fails closed', async () => {
+    const bare = (command: string) => JSON.stringify({ tool_name: 'Bash', tool_input: { command } })
     expect((await hook(guard(), payload('Bash', { command: 'FORBIDDEN' }))).code).toBe(2)
-    expect((await hook(guard(), JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'FORBIDDEN' } }))).code).toBe(2)
+    expect((await hook(guard(), bare('FORBIDDEN'))).code).toBe(2)
+    expect((await hook(guard(), bare('ls'))).code).toBe(0)
     expect((await hook(guard(), event('PreToolUse', {}))).code).toBe(2)
   })
 })
@@ -268,7 +283,7 @@ describe('install with events', () => {
 
   it('passes a Stop or prompt payload, and blocks a tool call, on a Node.js older than 22', async () => {
     const where = place()
-    for (const [input, code] of [[event('Stop', { last_assistant_message: 'x' }), 0], [event('UserPromptSubmit', { prompt: 'x' }), 0], [payload('Bash', { command: 'ls' }), 2], ['not json', 2]] as const) {
+    for (const [input, code] of [[event('Stop', { last_assistant_message: 'x' }), 0], [event('UserPromptSubmit', { prompt: 'x' }), 0], [payload('Bash', { command: 'ls' }), 2], [event('pre_tool_use', { tool_name: 'Bash', tool_input: { command: 'ls' } }), 2], [event('stop', {}), 2], ['not json', 2]] as const) {
       expect(await run(['hook'], where, { stdin: () => input, node: 'v20.20.2' }), input).toBe(code)
       expect(stderr).toContain('Node.js 22 or later')
     }
