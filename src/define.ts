@@ -29,9 +29,12 @@ export function defineHook<const K extends ToolKind>(definition: HookDefinition<
     throw new TypeError('statusMessage is not a non-empty string')
   if (!Number.isInteger(timeout) || timeout < 1)
     throw new TypeError(`timeout ${JSON.stringify(timeout)} is not a whole number of seconds`)
-  // A global or sticky pattern keeps its place between tests, so the same
-  // command would alternate between matching and not.
-  if (!Array.isArray(ownCommands) || ownCommands.some(pattern => !(pattern instanceof RegExp) || pattern.global || pattern.sticky))
+  // Copied before the check: `some` skips the holes of a sparse list, and the
+  // copy turns each into `undefined`. A global or sticky pattern keeps its
+  // place between tests, so the same command would alternate between matching
+  // and not.
+  const patterns: unknown[] | null = Array.isArray(ownCommands) ? [...ownCommands] : null
+  if (patterns === null || patterns.some(pattern => !(pattern instanceof RegExp) || pattern.global || pattern.sticky))
     throw new TypeError('ownCommands must list regular expressions without the g or y flag')
   return Object.freeze({
     name,
@@ -39,7 +42,7 @@ export function defineHook<const K extends ToolKind>(definition: HookDefinition<
     kinds: Object.freeze([...new Set<ToolKind>(kinds)]),
     statusMessage,
     timeout,
-    ownCommands: Object.freeze([...ownCommands]),
+    ownCommands: Object.freeze(patterns as RegExp[]),
     // runHook hands the check only the kinds it listed, which is what makes
     // the narrower parameter safe to widen.
     check: check as HookPlugin['check'],

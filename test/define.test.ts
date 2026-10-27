@@ -31,7 +31,7 @@ describe('defineHook', () => {
   it('keeps ownCommands, and refuses one that is not a pattern or keeps state between tests', () => {
     expect(defineHook(valid).ownCommands).toEqual([])
     expect(defineHook({ ...valid, ownCommands: [/^old$/] }).ownCommands).toEqual([/^old$/])
-    for (const ownCommands of [['^old$'], [/^old$/g], [/^old$/y], /^old$/] as never[])
+    for (const ownCommands of [['^old$'], [/^old$/g], [/^old$/y], /^old$/, Object.assign([], { 0: /^old$/, length: 2 })] as never[])
       expect(() => defineHook({ ...valid, ownCommands }), String(ownCommands)).toThrow(/^ownCommands /)
   })
 })
