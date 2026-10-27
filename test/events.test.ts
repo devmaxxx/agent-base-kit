@@ -159,6 +159,11 @@ describe('a hook told its agent', () => {
   it('asks Claude Code to hide the prompt even when the payload carries turn_id', async () => {
     expect(await blocked('claude', { turn_id: 't1' })).toHaveProperty('hookSpecificOutput', { hookEventName: 'UserPromptSubmit', suppressOriginalPrompt: true })
   })
+
+  it('lets the prompt pass, rather than guess the reply\'s fields, when told an agent it does not know', async () => {
+    const ran = await hook(guard(), event('UserPromptSubmit', { prompt: 'FORBIDDEN' }), { event: 'UserPromptSubmit', agent: 'cursor' as never })
+    expect(ran).toEqual({ code: 0, stdout: '', stderr: 'guard could not check the prompt, so it let it pass: agent "cursor" is neither claude nor codex\n' })
+  })
 })
 
 describe('events the plugin does not check', () => {
