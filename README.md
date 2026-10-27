@@ -47,8 +47,8 @@ It starts with [PreToolUse hooks](https://code.claude.com/docs/en/hooks), the la
 
 - **One function.** `check(call)` gets a typed call (`shell`, `write`, `edit` or `patch`) and returns `{ block, reason }`. Sync or async.
 - **Fails closed.** Unreadable payloads, throws, bad verdicts, hangs and a hook that cannot start all block.
-- **Both agents.** Claude Code and Codex, user or project scope, with matchers derived from the kinds you list.
-- **Survives upgrades.** A user install runs its own copy of your build on the Node.js that installed it, so an nvm or Homebrew upgrade does not silently switch it off.
+- **Installs with one command.** Your bin gets `install` and `uninstall` for `claude` or `codex`. The user scope is the default; `--project` writes an `npx` entry you can commit. Matchers come from the kinds you list. See [Quick start](#quick-start).
+- **Runs from a stable copy.** A user install copies your build to `~/.<name>/<build-id>/`, checks the copy starts, and points `~/.<name>/current` at it. The hook runs that copy on the Node.js that ran `install`, falling back to `node` on PATH if that one is gone. An nvm or Homebrew upgrade, an `npx` cache clean or a rebuild of your checkout does not change or switch off a running hook. See [What install writes](#what-install-writes).
 - **Plays well with other hooks.** Install and uninstall touch only their own entry and refuse a config they cannot extend safely.
 - **Claude Code plugin files.** One call writes the manifest, `hooks.json` and a marketplace.
 - **Zero dependencies**, ESM only, typed.
