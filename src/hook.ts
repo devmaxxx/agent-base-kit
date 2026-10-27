@@ -1,4 +1,4 @@
-import type { HookPlugin, HookVerdict, ToolCall } from './types'
+import type { Agent, HookEvent, HookPlugin, HookVerdict, ToolCall } from './types'
 import process from 'node:process'
 import { KIND_OF_TOOL } from './agents'
 
@@ -10,6 +10,20 @@ export interface RunHookOptions {
   stderr?: (text: string) => void
   /** Receives the decision a Stop or UserPromptSubmit check blocks with, as a JSON line. */
   stdout?: (text: string) => void
+  /**
+   * The event the agent runs the hook for, as the installed command names it
+   * with `--event`. Given, it decides how a fault exits without reading the
+   * payload, so a Stop or UserPromptSubmit payload that is cut short or not
+   * JSON passes, and a payload naming another event is a fault. Absent, the
+   * event comes from the payload's `hook_event_name`.
+   */
+  event?: HookEvent
+  /**
+   * The agent that runs the hook, as the installed command names it with
+   * `--agent`. Absent, a UserPromptSubmit payload carrying `turn_id`, which
+   * only Codex sends, reads as Codex.
+   */
+  agent?: Agent
 }
 
 // The events whose hook lets the agent go on when it cannot decide: an exit 2
@@ -17,6 +31,9 @@ export interface RunHookOptions {
 // UserPromptSubmit would drop every prompt the user sends.
 const OPEN_EVENTS = ['Stop', 'UserPromptSubmit'] as const
 type OpenEvent = typeof OPEN_EVENTS[number]
+const EVENTS: readonly HookEvent[] = ['PreToolUse', ...OPEN_EVENTS]
+
+const isOpen = (event: unknown): event is OpenEvent => (OPEN_EVENTS as readonly unknown[]).includes(event)
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 
@@ -112,13 +129,33 @@ export function openEventOf(stdin: string): OpenEvent | undefined {
   }
 }
 
-async function runOpenEvent(plugin: HookPlugin, event: OpenEvent, payload: Record<string, unknown>, options: RunHookOptions): Promise<number> {
+/**
+ * Whether a fault lets the event pass: the named event when the command names
+ * one, else the event the payload names.
+ */
+export function passesOnFault(event: HookEvent | undefined, stdin: string): boolean {
+  return event === undefined ? openEventOf(stdin) !== undefined : isOpen(event)
+}
+
+function payloadOf(stdin: string): Record<string, unknown> {
+  const payload: unknown = JSON.parse(stdin)
+  if (!isObject(payload))
+    throw new TypeError('payload is not an object')
+  return payload
+}
+
+async function runOpenEvent(plugin: HookPlugin, event: OpenEvent, read: () => Record<string, unknown>, options: RunHookOptions): Promise<number> {
   const hook = plugin.events[event]
   if (!hook)
     return 0
   const stderr = options.stderr ?? ((text: string) => void process.stderr.write(text))
   const stdout = options.stdout ?? ((text: string) => void process.stdout.write(text))
   try {
+    const payload = read()
+    if (payload.hook_event_name !== undefined && payload.hook_event_name !== event)
+      throw new TypeError(`hook_event_name ${JSON.stringify(payload.hook_event_name)} is not ${event}`)
+    if (options.agent !== undefined && options.agent !== 'claude' && options.agent !== 'codex')
+      throw new TypeError(`agent ${JSON.stringify(options.agent)} is neither claude nor codex`)
     // A Stop hook that blocks again on the reply its own block produced would
     // keep the agent going forever.
     if (event === 'Stop' && payload.stop_hook_active === true)
@@ -131,8 +168,10 @@ async function runOpenEvent(plugin: HookPlugin, event: OpenEvent, payload: Recor
       return 0
     // Codex rejects any hookSpecificOutput field it does not know, and a reply
     // it cannot read lets the prompt through, so the field goes only to Claude
-    // Code. Only Codex sends `turn_id`.
-    const hidden = event === 'UserPromptSubmit' && plugin.events.UserPromptSubmit!.hidePrompt && payload.turn_id === undefined
+    // Code. Without `--agent`, `turn_id` tells them apart: Codex's input schema
+    // requires it at UserPromptSubmit, and Claude Code does not send it.
+    const codex = options.agent === undefined ? payload.turn_id !== undefined : options.agent === 'codex'
+    const hidden = event === 'UserPromptSubmit' && plugin.events.UserPromptSubmit!.hidePrompt && !codex
     stdout(`${JSON.stringify({
       decision: 'block',
       reason: verdict.reason,
@@ -163,24 +202,31 @@ async function runOpenEvent(plugin: HookPlugin, event: OpenEvent, payload: Recor
  * `{"decision":"block","reason":…}`, and a fault to stderr, letting the event
  * pass. A Stop with `stop_hook_active` set passes unchecked, and so does an
  * event the plugin has no check for.
+ *
+ * With `options.event`, the event is the one named, not the payload's: a
+ * Stop or UserPromptSubmit returns 0 on any fault, a payload that is not JSON
+ * included, and a payload naming another event is a fault for that event.
  */
 export async function runHook(plugin: HookPlugin, stdin: string, options: RunHookOptions = {}): Promise<number> {
   const stderr = options.stderr ?? ((text: string) => void process.stderr.write(text))
+  if (isOpen(options.event))
+    return runOpenEvent(plugin, options.event, () => payloadOf(stdin), options)
   let verdict: HookVerdict
   try {
-    const payload: unknown = JSON.parse(stdin)
-    if (!isObject(payload))
-      throw new TypeError('payload is not an object')
+    if (options.event !== undefined && !EVENTS.includes(options.event))
+      throw new TypeError(`event ${JSON.stringify(options.event)} is not an event the hook runs`)
+    const payload = payloadOf(stdin)
     const event = payload.hook_event_name
-    const open = OPEN_EVENTS.find(name => name === event)
-    if (open)
-      return runOpenEvent(plugin, open, payload, options)
+    if (options.event === undefined && isOpen(event))
+      return runOpenEvent(plugin, event, () => payload, options)
     // Install writes only PreToolUse and the open events, so any other name
     // (a misspelling, another case, an event a later agent adds) is a payload
     // this does not know, and passing it would let the call it carries run.
     // Only an absent name reads as PreToolUse, the one event every hook has.
+    // A command installed for PreToolUse blocks whatever event the payload
+    // names, since the agent reads its exit as PreToolUse's.
     if (event !== undefined && event !== 'PreToolUse')
-      throw new TypeError(`hook_event_name ${JSON.stringify(event)} is not an event the hook runs`)
+      throw new TypeError(`hook_event_name ${JSON.stringify(event)} is not ${options.event ?? 'an event the hook runs'}`)
     // Both agents always name the tool, so a payload without one is a shape
     // this does not know, and reading it as some other tool would let it run.
     const tool = payload.tool_name

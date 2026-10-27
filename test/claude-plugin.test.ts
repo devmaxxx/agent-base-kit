@@ -35,7 +35,7 @@ describe('claudePluginFiles', () => {
       hooks: {
         PreToolUse: [{
           matcher: 'Bash|Write|Edit|MultiEdit|NotebookEdit',
-          hooks: [{ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" hook || exit 2', timeout: 10, statusMessage: 'Running toy-guard', onFailure: 'block' }],
+          hooks: [{ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" hook --event PreToolUse --agent claude || exit 2', timeout: 10, statusMessage: 'Running toy-guard', onFailure: 'block' }],
         }],
       },
     })
@@ -52,7 +52,7 @@ describe('claudePluginFiles', () => {
     writeFileSync(join(root, 'dist/cli.mjs'), 'process.stdout.write(process.argv.slice(2).join(\' \'))\n')
     const ran = sh()
     expect(ran.status).toBe(0)
-    expect(ran.stdout.toString()).toBe('hook')
+    expect(ran.stdout.toString()).toBe('hook --event PreToolUse --agent claude')
   })
 
   it('routes only the tools the kinds call for', () => {

@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import process from 'node:process'
-import { AGENTS, requireMatcher } from './agents'
+import { AGENTS, hookFlags, requireMatcher } from './agents'
 
 /** Where {@link uninstall} looks: everything is passed in, so nothing reaches past what the caller names. */
 export interface UninstallOptions {
@@ -75,8 +75,10 @@ function hookCommand(plugin: HookPlugin, scope: Scope, script: string, node: str
 // at PreToolUse that becomes a block. The other events pass on any exit but 2,
 // which is what they should do when the hook cannot start.
 function entriesFor(plugin: HookPlugin, agent: Agent, command: string): Partial<Record<HookEvent, HookEntry>> {
-  const entry = (event: HookEvent, status: string, timeout: number): { type: string, command: string, timeout: number, statusMessage: string } =>
-    ({ type: 'command', command: event === 'PreToolUse' ? `${command} || exit 2` : command, timeout, statusMessage: status })
+  const entry = (event: HookEvent, status: string, timeout: number): { type: string, command: string, timeout: number, statusMessage: string } => {
+    const run = `${command} ${hookFlags(event, agent)}`
+    return { type: 'command', command: event === 'PreToolUse' ? `${run} || exit 2` : run, timeout, statusMessage: status }
+  }
   const { Stop, UserPromptSubmit } = plugin.events
   return {
     PreToolUse: {
@@ -98,7 +100,8 @@ const QUOTED = String.raw`(?:[^']|'\\'')*`
 // pinned entry is matched whatever its file name, and survives a renamed bin.
 // The bare `node '<path>' hook` form predates the pinned Node.js and the copy,
 // when the path was wherever the package sat; it needs a directory named
-// exactly after the plugin. Commands written before `|| exit 2` lack it.
+// exactly after the plugin. Commands written before `|| exit 2` lack it, and
+// those written before `--event` and `--agent` lack them.
 // Forms only the plugin knows it wrote come from its `ownCommands`, each
 // wrapped to match the whole command: unanchored, or anchored on one side of
 // an alternation only, it would take another hook's entry for this one.
@@ -107,7 +110,8 @@ function ownHook(plugin: HookPlugin, entry: string): (command: string) => boolea
   const pinned = String.raw`n='${QUOTED}'; \[ -x "\$n" \] \|\| n=node; "\$n" '${QUOTED}/\.${name}/current/[^/']+' hook`
   const bare = `node '${QUOTED}/${name}/(?:${QUOTED}/)?${escape(entry)}' hook`
   const project = `npx --no-install ${escape(plugin.packageName)} hook`
-  const own = new RegExp(`^(?:${pinned}|${bare}|${project})(?: \\|\\| exit 2)?$`)
+  const flags = String.raw`(?: --event (?:PreToolUse|Stop|UserPromptSubmit))?(?: --agent (?:claude|codex))?`
+  const own = new RegExp(`^(?:${pinned}|${bare}|${project})${flags}(?: \\|\\| exit 2)?$`)
   const earlier = plugin.ownCommands.map(pattern => new RegExp(`^(?:${pattern.source})$`, pattern.flags))
   return command => own.test(command) || earlier.some(pattern => pattern.test(command))
 }
@@ -354,7 +358,8 @@ function withExtra(file: string, place: Omit<InstallPlace, 'file'>, write: () =>
  * The user scope copies the bin's directory to `~/.<name>/<build-id>/`, checks
  * the copy runs, points `~/.<name>/current` at it and runs it from there on
  * `execPath`. The project scope runs `npx --no-install <packageName> hook`.
- * The PreToolUse command ends in `|| exit 2`, so a hook that cannot start
+ * Each command names its event and agent, `hook --event <event> --agent
+ * <agent>`, and the PreToolUse one ends in `|| exit 2`, so a hook that cannot start
  * blocks the call, and the Claude Code entry sets `onFailure: "block"` for one
  * that times out. The other events' commands do not, so they pass instead.
  * Then the plugin's `onInstall` runs.

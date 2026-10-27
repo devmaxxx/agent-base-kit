@@ -1,7 +1,7 @@
-import type { HookPlugin } from './types'
+import type { HookEvent, HookPlugin } from './types'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { requireMatcher } from './agents'
+import { hookFlags, requireMatcher } from './agents'
 
 /** A person or organisation, as the plugin and marketplace manifests take it. */
 export interface ClaudePluginPerson {
@@ -46,15 +46,15 @@ const ENTRY = /^[\w-][\w.-]*(?:\/[\w-][\w.-]*)*\.mjs$/
 // Claude Code puts the plugin's path in for the variable before the shell
 // runs, and its docs ask for double quotes around it.
 function pluginHooks(plugin: HookPlugin, matcher: string, entry: string): Record<string, unknown[]> {
-  const command = `node "\${CLAUDE_PLUGIN_ROOT}/${entry}" hook`
+  const command = (event: HookEvent): string => `node "\${CLAUDE_PLUGIN_ROOT}/${entry}" hook ${hookFlags(event, 'claude')}`
   const hooks: Record<string, unknown[]> = {
     PreToolUse: [{
       matcher,
-      hooks: [{ type: 'command', command: `${command} || exit 2`, timeout: plugin.timeout, statusMessage: plugin.statusMessage, onFailure: 'block' }],
+      hooks: [{ type: 'command', command: `${command('PreToolUse')} || exit 2`, timeout: plugin.timeout, statusMessage: plugin.statusMessage, onFailure: 'block' }],
     }],
   }
-  for (const [event, hook] of Object.entries(plugin.events))
-    hooks[event] = [{ hooks: [{ type: 'command', command, timeout: hook.timeout, statusMessage: hook.statusMessage }] }]
+  for (const [event, hook] of Object.entries(plugin.events) as [HookEvent, { timeout: number, statusMessage: string }][])
+    hooks[event] = [{ hooks: [{ type: 'command', command: command(event), timeout: hook.timeout, statusMessage: hook.statusMessage }] }]
   return hooks
 }
 
@@ -72,10 +72,10 @@ function entryOf(entry: string): string {
  * to the package root: `.claude-plugin/plugin.json`, `hooks/hooks.json`, and
  * with `marketplace`, `.claude-plugin/marketplace.json`.
  *
- * The PreToolUse hook runs `node "${CLAUDE_PLUGIN_ROOT}/<entry>" hook || exit 2`
- * with `onFailure: "block"`, so a plugin that cannot start or times out blocks
- * the call; each of the plugin's other events runs the same command without
- * either, so it passes instead. Claude Code copies the plugin and installs
+ * The PreToolUse hook runs `node "${CLAUDE_PLUGIN_ROOT}/<entry>" hook --event
+ * PreToolUse --agent claude || exit 2` with `onFailure: "block"`, so a plugin that cannot start or times out blocks
+ * the call; each of the plugin's other events runs the same command, naming
+ * its own event, without either, so it passes instead. Claude Code copies the plugin and installs
  * nothing into it, and the plugin's `onInstall` does not run, so the entry's
  * directory must hold the whole build. Throws when the plugin checks
  * no tool Claude Code has, or a field would make Claude Code refuse the

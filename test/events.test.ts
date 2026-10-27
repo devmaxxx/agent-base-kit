@@ -1,4 +1,4 @@
-import type { CliIO, HookDefinition, HookPlugin, InstallPlace, ToolCall, ToolKind } from '../src'
+import type { CliIO, HookDefinition, HookPlugin, InstallPlace, RunHookOptions, ToolCall, ToolKind } from '../src'
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -25,9 +25,10 @@ function guard(extra: Partial<HookDefinition<ToolKind>> = {}): HookPlugin {
 
 const event = (hook_event_name: string, fields: Record<string, unknown>): string => JSON.stringify({ hook_event_name, ...fields })
 
-async function hook(plugin: HookPlugin, input: string): Promise<{ code: number, stdout: string, stderr: string }> {
+async function hook(plugin: HookPlugin, input: string, options: RunHookOptions = {}): Promise<{ code: number, stdout: string, stderr: string }> {
   const out = { stdout: '', stderr: '' }
   const code = await runHook(plugin, input, {
+    ...options,
     cwd: '/fallback',
     stdout: (text) => { out.stdout += text },
     stderr: (text) => { out.stderr += text },
@@ -98,6 +99,65 @@ describe('a UserPromptSubmit check', () => {
   it('lets the prompt pass when the check throws', async () => {
     const plugin = guard({ events: { UserPromptSubmit: { check: async () => Promise.reject(new Error('down')) } } })
     expect(await hook(plugin, event('UserPromptSubmit', { prompt: 'x' }))).toEqual({ code: 0, stdout: '', stderr: 'guard could not check the prompt, so it let it pass: down\n' })
+  })
+})
+
+// What the agent may send when its write is cut short: the prompt it would
+// lose sits inside the part that never arrived.
+const TRUNCATED = '{"hook_event_name":"UserPromptSubmit","prompt":"FORBIDDEN and the rest of'
+
+describe('a hook told its event', () => {
+  it('lets a prompt or reply pass when the payload is cut short, empty or not an object', async () => {
+    for (const named of ['UserPromptSubmit', 'Stop'] as const) {
+      for (const input of [TRUNCATED, '', '[1]']) {
+        const ran = await hook(guard(), input, { event: named })
+        expect(ran, `${named} ${input}`).toMatchObject({ code: 0, stdout: '' })
+        expect(ran.stderr).toMatch(/^guard could not check the (?:prompt|reply), so it let it pass: /)
+      }
+    }
+  })
+
+  it('still blocks a cut-short payload when it is not told the event, or told PreToolUse', async () => {
+    expect((await hook(guard(), TRUNCATED)).code).toBe(2)
+    expect((await hook(guard(), TRUNCATED, { event: 'PreToolUse' })).code).toBe(2)
+    expect((await hook(guard(), '', { event: 'PreToolUse' })).code).toBe(2)
+  })
+
+  it('checks the prompt it is told of as it does without being told', async () => {
+    const ran = await hook(guard(), event('UserPromptSubmit', { prompt: 'FORBIDDEN' }), { event: 'UserPromptSubmit' })
+    expect(ran.code).toBe(0)
+    expect(JSON.parse(ran.stdout)).toMatchObject({ decision: 'block', reason: 'guard: FORBIDDEN in the prompt' })
+    expect(await hook(guard(), JSON.stringify({ prompt: 'fine' }), { event: 'UserPromptSubmit' })).toEqual({ code: 0, stdout: '', stderr: '' })
+  })
+
+  it('reads a payload naming another event as a fault of the event it was told', async () => {
+    let called = false
+    const plugin = guard({ check: () => {
+      called = true
+      return { block: false }
+    } })
+    const stop = await hook(plugin, event('Stop', { last_assistant_message: 'x' }), { event: 'PreToolUse' })
+    expect(stop).toEqual({ code: 2, stdout: '', stderr: 'Blocked by guard, it could not check the call: hook_event_name "Stop" is not PreToolUse\n' })
+    const call = await hook(plugin, payload('Bash', { command: 'FORBIDDEN' }), { event: 'UserPromptSubmit' })
+    expect(call).toEqual({ code: 0, stdout: '', stderr: 'guard could not check the prompt, so it let it pass: hook_event_name "PreToolUse" is not UserPromptSubmit\n' })
+    expect(called).toBe(false)
+  })
+
+  it('blocks when told an event it does not run', async () => {
+    expect((await hook(guard(), payload('Bash', { command: 'ls' }), { event: 'PostToolUse' as never })).code).toBe(2)
+  })
+})
+
+describe('a hook told its agent', () => {
+  const blocked = async (agent: 'claude' | 'codex', fields: Record<string, unknown>) =>
+    JSON.parse((await hook(guard(), event('UserPromptSubmit', { prompt: 'FORBIDDEN', ...fields }), { agent })).stdout)
+
+  it('keeps suppressOriginalPrompt out of a Codex reply whatever the payload holds', async () => {
+    expect(await blocked('codex', {})).toEqual({ decision: 'block', reason: 'guard: FORBIDDEN in the prompt' })
+  })
+
+  it('asks Claude Code to hide the prompt even when the payload carries turn_id', async () => {
+    expect(await blocked('claude', { turn_id: 't1' })).toHaveProperty('hookSpecificOutput', { hookEventName: 'UserPromptSubmit', suppressOriginalPrompt: true })
   })
 })
 
@@ -217,7 +277,7 @@ describe('install with events', () => {
   const read = (file: string): any => JSON.parse(readFileSync(file, 'utf8'))
   const ours = (hook: { command: string }) => hook.command.includes('.guard/current')
   const oursIn = (file: string, event: string): unknown[] => (read(file).hooks[event] ?? []).flatMap((item: any) => item.hooks).filter(ours)
-  const PINNED = /^n='.+'; \[ -x "\$n" \] \|\| n=node; "\$n" '.+\/\.guard\/current\/cli\.mjs' hook$/
+  const PINNED = (event: string) => new RegExp(String.raw`^n='.+'; \[ -x "\$n" \] \|\| n=node; "\$n" '.+\/\.guard\/current\/cli\.mjs' hook --event ${event} --agent claude$`)
 
   it('writes one entry per event, failing open everywhere but PreToolUse, and removes them all', async () => {
     const where = place()
@@ -226,10 +286,10 @@ describe('install with events', () => {
     await run(['install', 'claude'], where)
     const { hooks } = read(file)
     expect(Object.keys(hooks)).toEqual(['PreToolUse', 'Stop', 'UserPromptSubmit'])
-    expect(hooks.PreToolUse[0].hooks[0].command).toMatch(/ hook \|\| exit 2$/)
+    expect(hooks.PreToolUse[0].hooks[0].command).toMatch(/ hook --event PreToolUse --agent claude \|\| exit 2$/)
     expect(hooks.PreToolUse[0].hooks[0].onFailure).toBe('block')
-    expect(hooks.Stop).toEqual([{ hooks: [{ type: 'command', command: expect.stringMatching(PINNED), timeout: 10, statusMessage: 'Running guard' }] }])
-    expect(hooks.UserPromptSubmit).toEqual([{ hooks: [{ type: 'command', command: expect.stringMatching(PINNED), timeout: 3, statusMessage: 'Checking the prompt' }] }])
+    expect(hooks.Stop).toEqual([{ hooks: [{ type: 'command', command: expect.stringMatching(PINNED('Stop')), timeout: 10, statusMessage: 'Running guard' }] }])
+    expect(hooks.UserPromptSubmit).toEqual([{ hooks: [{ type: 'command', command: expect.stringMatching(PINNED('UserPromptSubmit')), timeout: 3, statusMessage: 'Checking the prompt' }] }])
     expect(await run(['uninstall', 'claude'], where)).toBe(0)
     expect(read(file).hooks).toEqual({})
   })
@@ -238,8 +298,8 @@ describe('install with events', () => {
     const where = place()
     await run(['install', 'codex', '--project'], where)
     const { hooks } = read(join(where.cwd, '.codex/hooks.json'))
-    expect(hooks.PreToolUse[0].hooks[0]).toEqual({ type: 'command', command: 'npx --no-install guard hook || exit 2', timeout: 10, statusMessage: 'Running guard' })
-    expect(hooks.Stop).toEqual([{ hooks: [{ type: 'command', command: 'npx --no-install guard hook', timeout: 10, statusMessage: 'Running guard' }] }])
+    expect(hooks.PreToolUse[0].hooks[0]).toEqual({ type: 'command', command: 'npx --no-install guard hook --event PreToolUse --agent codex || exit 2', timeout: 10, statusMessage: 'Running guard' })
+    expect(hooks.Stop).toEqual([{ hooks: [{ type: 'command', command: 'npx --no-install guard hook --event Stop --agent codex', timeout: 10, statusMessage: 'Running guard' }] }])
   })
 
   it('replaces an earlier version\'s entry at an event this one dropped or still has, and keeps other hooks there', async () => {
@@ -255,7 +315,7 @@ describe('install with events', () => {
     const noPrompt = guard({ events: { Stop: { check: () => ({ block: false }) } }, ownCommands: [/node '\/opt\/guard-old\/cli\.mjs' hook/] })
     expect(await run(['install', 'claude'], where, { plugin: noPrompt })).toBe(0)
     const { hooks } = read(file)
-    expect(hooks.Stop).toEqual([other, { hooks: [expect.objectContaining({ command: expect.stringMatching(PINNED) })] }])
+    expect(hooks.Stop).toEqual([other, { hooks: [expect.objectContaining({ command: expect.stringMatching(PINNED('Stop')) })] }])
     expect(hooks).not.toHaveProperty('UserPromptSubmit')
     expect(oursIn(file, 'Stop')).toHaveLength(1)
   })
@@ -287,6 +347,65 @@ describe('install with events', () => {
       expect(await run(['hook'], where, { stdin: () => input, node: 'v20.20.2' }), input).toBe(code)
       expect(stderr).toContain('Node.js 22 or later')
     }
+  })
+
+  it('hands --event and --agent to the hook, and fails a bad argument as the event it names', async () => {
+    const where = place()
+    const truncated = () => TRUNCATED
+    expect(await run(['hook', '--event', 'UserPromptSubmit', '--agent', 'claude'], where, { stdin: truncated })).toBe(0)
+    expect(await run(['hook', '--event', 'Stop'], where, { stdin: () => '' })).toBe(0)
+    expect(await run(['hook'], where, { stdin: truncated })).toBe(2)
+    expect(await run(['hook', '--event', 'PreToolUse', '--agent', 'codex'], where, { stdin: truncated })).toBe(2)
+    // Without a valid --event, the payload's event decides, as it does for a
+    // command written before the flag.
+    const prompt = event('UserPromptSubmit', { prompt: 'x' })
+    const call = payload('Bash', { command: 'ls' })
+    for (const [args, input, code] of [
+      [['--event', 'UserPromptSubmit', '--verbose'], call, 0],
+      [['--event', 'Stop', '--agent', 'cursor'], call, 0],
+      [['--event', 'PreToolUse', '--event', 'Stop'], prompt, 2],
+      [['--event', 'stop'], call, 2],
+      [['--event', 'stop'], prompt, 0],
+      [['--agent', 'claude', 'extra'], call, 2],
+    ] as const) {
+      expect(await run(['hook', ...args], where, { stdin: () => input }), `${args.join(' ')} ${input}`).toBe(code)
+      expect(stderr).toMatch(/is not an argument hook takes\n$/)
+    }
+  })
+
+  it('keeps suppressOriginalPrompt out of the reply when told the agent is Codex', async () => {
+    let out = ''
+    const prompt = () => event('UserPromptSubmit', { prompt: 'FORBIDDEN' })
+    expect(await run(['hook', '--event', 'UserPromptSubmit', '--agent', 'codex'], place(), { stdin: prompt, stdout: (text) => {
+      out += text
+    } })).toBe(0)
+    expect(JSON.parse(out)).toEqual({ decision: 'block', reason: 'guard: FORBIDDEN in the prompt' })
+  })
+
+  it('passes a cut-short prompt it is told of on a Node.js older than 22', async () => {
+    expect(await run(['hook', '--event', 'UserPromptSubmit'], place(), { stdin: () => TRUNCATED, node: 'v20.20.2' })).toBe(0)
+    expect(await run(['hook', '--event', 'PreToolUse'], place(), { stdin: () => event('Stop', {}), node: 'v20.20.2' })).toBe(2)
+  })
+
+  it('recognizes the commands an install wrote before --event and --agent, and replaces them', async () => {
+    const where = place()
+    const file = join(where.home, '.claude/settings.json')
+    mkdirSync(dirname(file))
+    const pinned = `n='/old/node'; [ -x "$n" ] || n=node; "$n" '${where.home}/.guard/current/cli.mjs' hook`
+    const other = { hooks: [{ type: 'command', command: `${pinned} --event Stop --agent claude; echo done` }] }
+    writeFileSync(file, JSON.stringify({ hooks: {
+      PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: `${pinned} || exit 2` }] }],
+      Stop: [other, { hooks: [{ type: 'command', command: pinned }] }],
+      UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'npx --no-install guard hook' }] }],
+    } }))
+    expect(await run(['install', 'claude'], where)).toBe(0)
+    expect(await run(['install', 'claude'], where)).toBe(0)
+    const { hooks } = read(file)
+    expect(hooks.PreToolUse.flatMap((item: any) => item.hooks).map((h: any) => h.command)).toEqual([expect.stringMatching(/ hook --event PreToolUse --agent claude \|\| exit 2$/)])
+    expect(hooks.Stop).toEqual([other, { hooks: [expect.objectContaining({ command: expect.stringMatching(PINNED('Stop')) })] }])
+    expect(hooks.UserPromptSubmit).toEqual([{ hooks: [expect.objectContaining({ command: expect.stringMatching(PINNED('UserPromptSubmit')) })] }])
+    expect(await run(['uninstall', 'claude'], where)).toBe(0)
+    expect(read(file).hooks).toEqual({ Stop: [other] })
   })
 
   it('names every event in the usage', async () => {
@@ -390,8 +509,8 @@ describe('claudePluginFiles with events', () => {
   it('writes each event beside PreToolUse, failing open', () => {
     const { hooks } = JSON.parse(claudePluginFiles({ plugin: guard(), entry: 'dist/cli.mjs' })['hooks/hooks.json']!)
     expect(Object.keys(hooks)).toEqual(['PreToolUse', 'Stop', 'UserPromptSubmit'])
-    expect(hooks.PreToolUse[0].hooks[0]).toMatchObject({ command: 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" hook || exit 2', onFailure: 'block' })
-    expect(hooks.Stop).toEqual([{ hooks: [{ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" hook', timeout: 10, statusMessage: 'Running guard' }] }])
-    expect(hooks.UserPromptSubmit).toEqual([{ hooks: [{ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" hook', timeout: 3, statusMessage: 'Checking the prompt' }] }])
+    expect(hooks.PreToolUse[0].hooks[0]).toMatchObject({ command: 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" hook --event PreToolUse --agent claude || exit 2', onFailure: 'block' })
+    expect(hooks.Stop).toEqual([{ hooks: [{ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" hook --event Stop --agent claude', timeout: 10, statusMessage: 'Running guard' }] }])
+    expect(hooks.UserPromptSubmit).toEqual([{ hooks: [{ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" hook --event UserPromptSubmit --agent claude', timeout: 3, statusMessage: 'Checking the prompt' }] }])
   })
 })

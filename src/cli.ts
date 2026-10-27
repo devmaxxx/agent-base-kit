@@ -1,10 +1,10 @@
 import type { InstallResult } from './install'
-import type { Agent, HookPlugin } from './types'
+import type { Agent, HookEvent, HookPlugin } from './types'
 import { Buffer } from 'node:buffer'
 import { homedir } from 'node:os'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
-import { openEventOf, runHook } from './hook'
+import { passesOnFault, runHook } from './hook'
 import { install, uninstall } from './install'
 
 /** What the command line needs from its process, passed in so tests can supply it. */
@@ -32,6 +32,32 @@ export interface CliOptions {
 }
 
 const isAgent = (word: string | undefined): word is Agent => word === 'claude' || word === 'codex'
+const isEvent = (word: string | undefined): word is HookEvent => word === 'PreToolUse' || word === 'Stop' || word === 'UserPromptSubmit'
+
+interface HookArgs {
+  event?: HookEvent
+  agent?: Agent
+  /** Why the arguments are not ones `hook` takes. */
+  error?: string
+}
+
+// What `hook` is told on its command line. A bad argument is a fault, not a
+// usage error: the agent reads the exit as the event's, so it must still be 2
+// at PreToolUse and 0 at an event that passes on a fault, and an `--event`
+// read before the bad argument still decides which.
+function hookArgs(args: readonly string[]): HookArgs {
+  const parsed: HookArgs = {}
+  for (let i = 0; i < args.length; i += 2) {
+    const [flag, value] = [args[i], args[i + 1]]
+    if (flag === '--event' && isEvent(value) && parsed.event === undefined)
+      parsed.event = value
+    else if (flag === '--agent' && isAgent(value) && parsed.agent === undefined)
+      parsed.agent = value
+    else
+      return { ...parsed, error: `${[flag, value].filter(word => word !== undefined).join(' ')} is not an argument hook takes` }
+  }
+  return parsed
+}
 
 /** Runs one command line and resolves to its exit code. */
 export type CliMain = (argv: readonly string[], io: CliIO) => Promise<number>
@@ -41,7 +67,7 @@ function usage(plugin: HookPlugin, bin: string): string {
   const rows = [
     ['install <claude|codex> [--project]', `add the ${events.join(' and ')} hook${events.length > 1 ? 's' : ''}`],
     ['uninstall <claude|codex> [--project]', 'remove it'],
-    ['hook', 'run as the hook (reads the agent\'s payload on stdin)'],
+    ['hook [--event <event>] [--agent <claude|codex>]', 'run as the hook (reads the agent\'s payload on stdin)'],
   ]
   const width = Math.max(...rows.map(([command]) => command!.length)) + 1
   return `Usage:\n${rows.map(([command, what]) => `  ${bin} ${command!.padEnd(width)}${what}`).join('\n')}\n`
@@ -49,9 +75,12 @@ function usage(plugin: HookPlugin, bin: string): string {
 
 /**
  * Builds the plugin's command line: `install` and `uninstall <claude|codex>
- * [--project]`, and `hook`, which reads the tool call from `io.stdin`.
+ * [--project]`, and `hook [--event <event>] [--agent <claude|codex>]`, which
+ * reads the payload from `io.stdin` and hands the flags to {@link runHook}.
  *
- * Exit codes: `hook` returns what {@link runHook} returns, 0 or 2. `install`
+ * Exit codes: `hook` returns what {@link runHook} returns, 0 or 2; an
+ * argument it does not take is a fault, 0 at Stop or UserPromptSubmit and 2
+ * otherwise. `install`
  * and `uninstall` return 0, or 1 with the reason on stderr; the notes the
  * plugin's `onInstall` or `onUninstall` returns follow the config file on
  * stdout, its warnings go to stderr. Anything else, including an unknown flag
@@ -64,6 +93,7 @@ export function createCli(plugin: HookPlugin, options: CliOptions = {}): CliMain
   const bin = options.bin ?? plugin.name
   return async (argv, io) => {
     const [command, agent, ...flags] = argv
+    const args = command === 'hook' ? hookArgs(argv.slice(1)) : {}
     // A user hook falls back to the `node` first on PATH once the Node.js that
     // installed it is gone, so an older one can reach it. Nothing below 22 is
     // tested, and a check that misbehaves there could let a call through, so
@@ -75,10 +105,16 @@ export function createCli(plugin: HookPlugin, options: CliOptions = {}): CliMain
       io.stderr(`${bin} needs Node.js 22 or later, and this one is ${io.node}. Run \`npx ${plugin.packageName} install claude\` (or codex) again with Node.js 22 or later, or put one first on PATH and restart the agent.\n`)
       if (command === 'install')
         return 1
-      return openEventOf(io.stdin()) ? 0 : 2
+      return passesOnFault(args.event, io.stdin()) ? 0 : 2
     }
-    if (command === 'hook')
-      return runHook(plugin, io.stdin(), { cwd: io.cwd, stderr: io.stderr, stdout: io.stdout })
+    if (command === 'hook') {
+      if (args.error) {
+        const open = passesOnFault(args.event, io.stdin())
+        io.stderr(open ? `${plugin.name} let it pass: ${args.error}\n` : `Blocked by ${plugin.name}: ${args.error}\n`)
+        return open ? 0 : 2
+      }
+      return runHook(plugin, io.stdin(), { cwd: io.cwd, stderr: io.stderr, stdout: io.stdout, event: args.event, agent: args.agent })
+    }
     // A mistyped `--project` must not fall back to the user scope, which an
     // uninstall would then remove the wrong hook from.
     const project = flags.length === 1 && flags[0] === '--project'
@@ -137,6 +173,7 @@ export async function readStdin(stream: AsyncIterable<unknown> = process.stdin):
 export async function runCli(plugin: HookPlugin, entryUrl: string, options: CliOptions = {}): Promise<void> {
   const argv = process.argv.slice(2)
   const hook = argv[0] === 'hook'
+  const { event } = hook ? hookArgs(argv.slice(1)) : {}
   let done = false
   let open = false
   if (hook) {
@@ -148,7 +185,7 @@ export async function runCli(plugin: HookPlugin, entryUrl: string, options: CliO
   }
   try {
     const input = hook ? await readStdin() : ''
-    if (hook && openEventOf(input)) {
+    if (hook && passesOnFault(event, input)) {
       open = true
       process.exitCode = 0
     }

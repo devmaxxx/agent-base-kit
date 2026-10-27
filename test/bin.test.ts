@@ -33,6 +33,27 @@ describe('a plugin bin built on runCli', () => {
     expect(JSON.parse(blocked.stdout.toString())).toEqual({ decision: 'block', reason: 'toy-bin: take FORBIDDEN out of the reply' })
   })
 
+  it('lets a reply pass on a payload cut short or a check that never settles when told the event is Stop', () => {
+    const told = (event: string, input: string) => {
+      const ran = spawnSync(process.execPath, [built, 'hook', '--event', event, '--agent', 'claude'], { input })
+      return { status: ran.status, stderr: ran.stderr.toString() }
+    }
+    expect(told('Stop', '{"hook_event_name":"Stop","last_assistant_message":"FORBI')).toMatchObject({ status: 0, stderr: expect.stringContaining('let it pass') })
+    expect(told('Stop', JSON.stringify({ last_assistant_message: 'HANG' }))).toEqual({ status: 0, stderr: 'toy-bin let it pass, its check never finished\n' })
+    expect(told('PreToolUse', '{"hook_event_name":"PreToolUse","tool_name":"Ba').status).toBe(2)
+    expect(hook('{"hook_event_name":"Stop","last_assistant_message":"FORBI').status).toBe(2)
+  })
+
+  it('installs commands that pass a cut-short Stop payload and block a cut-short tool call', () => {
+    const where = place()
+    const env = { ...process.env, HOME: where.home }
+    expect(spawnSync(process.execPath, [built, 'install', 'claude'], { cwd: where.cwd, env }).status).toBe(0)
+    const { hooks } = JSON.parse(readFileSync(join(where.home, '.claude/settings.json'), 'utf8'))
+    const sh = (command: string, input: string) => spawnSync('/bin/sh', ['-c', command], { input, env: { PATH: '/usr/bin:/bin' } }).status
+    expect(sh(hooks.Stop[0].hooks[0].command, '{"hook_event_name":"Stop","last_assis')).toBe(0)
+    expect(sh(hooks.PreToolUse[0].hooks[0].command, '{"hook_event_name":"PreToolUse","tool_na')).toBe(2)
+  })
+
   it('installs a hook that keeps working after the package it came from is gone', () => {
     const where = place()
     const pkg = mkdtempSync(join(tmpdir(), 'at-pkg-'))
