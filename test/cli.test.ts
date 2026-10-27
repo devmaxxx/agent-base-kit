@@ -112,7 +112,8 @@ describe('cli', () => {
       name: 'policy-guard',
       kinds: ['shell'],
       check: () => ({ block: false }),
-      ownCommands: [/^node '(?:[^']|'\\'')*policy-guard(?:[^']|'\\'')*\/cli\.mjs' hook(?: \|\| exit 2)?$/],
+      // Upper case under `i`, so dropping the flags would lose the entry.
+      ownCommands: [/^node '(?:[^']|'\\'')*policy-guard(?:[^']|'\\'')*\/CLI\.mjs' hook(?: \|\| exit 2)?$/i],
     })
     const legacy = `node '/src/policy-guard-fork/dist/cli.mjs' hook || exit 2`
     const others = [
