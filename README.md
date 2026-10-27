@@ -119,7 +119,7 @@ Keep `check` well inside `timeout`, which defaults to 10 seconds.
 | `patch` | `{ kind: 'patch', patch }` (the whole patch text) | none | `apply_patch` |
 | `tool` | `{ kind: 'tool', name, input }` (the tool's input object) | the names in `tools` | the names in `tools` |
 
-`tools` names tools beyond the agents' own, such as `mcp__github__create_pull_request`, and `kinds` lists `tool` exactly when it does. A name holds only letters, digits, `_` and `-`, and may not be one of the agents' own tools. A listed tool's input must be an object, or the call is blocked.
+`tools` names tools beyond the agents' own, such as `mcp__github__create_pull_request`, and `kinds` lists `tool` exactly when it does. A name holds only letters, digits, `_` and `-`, and may not be a tool a kind already covers (`Bash`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `apply_patch`). A listed tool's input that is not an object blocks the call; an absent one reaches the check as `{}`.
 
 Codex sends every file change as one `apply_patch`, so `install codex` refuses a plugin with `write` or `edit` but no `patch`. A plugin with no tool in an agent, such as `['patch']` for Claude Code, is refused too.
 

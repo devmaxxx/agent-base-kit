@@ -142,7 +142,7 @@ export interface HookDefinition<K extends ToolKind> {
    */
   ownCommands?: readonly RegExp[]
   /**
-   * Tools other than the agents' own, by exact name, such as
+   * Tools no kind covers, by exact name, such as
    * `mcp__github__create_pull_request`. They reach the check as `tool` calls,
    * so `kinds` must list `tool` exactly when this names any.
    */
