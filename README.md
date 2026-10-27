@@ -4,7 +4,7 @@
 
 # agent-base-kit
 
-**Run any Claude Code or Codex hook from a stable copy, on the Node.js that installed it. Fail-closed, zero dependencies.**
+**Run any Claude Code or Codex hook from a stable copy, on the Node.js that installed it.**
 
 [![npm version](https://img.shields.io/npm/v/agent-base-kit?color=cb3837)](https://www.npmjs.com/package/agent-base-kit)
 [![npm downloads](https://img.shields.io/npm/dm/agent-base-kit)](https://www.npmjs.com/package/agent-base-kit)
