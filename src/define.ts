@@ -16,7 +16,7 @@ const PACKAGE = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/
  * broken plugin fails when it is built, not when the hook runs.
  */
 export function defineHook<const K extends ToolKind>(definition: HookDefinition<K>): HookPlugin {
-  const { name, kinds, check, packageName = name, statusMessage = `Running ${name}`, timeout = 10 } = definition
+  const { name, kinds, check, packageName = name, statusMessage = `Running ${name}`, timeout = 10, ownCommands = [] } = definition
   if (typeof name !== 'string' || !NAME.test(name))
     throw new TypeError(`name ${JSON.stringify(name)} is not kebab-case (lowercase letters and digits, joined by single hyphens)`)
   if (typeof packageName !== 'string' || !PACKAGE.test(packageName))
@@ -29,12 +29,17 @@ export function defineHook<const K extends ToolKind>(definition: HookDefinition<
     throw new TypeError('statusMessage is not a non-empty string')
   if (!Number.isInteger(timeout) || timeout < 1)
     throw new TypeError(`timeout ${JSON.stringify(timeout)} is not a whole number of seconds`)
+  // A global or sticky pattern keeps its place between tests, so the same
+  // command would alternate between matching and not.
+  if (!Array.isArray(ownCommands) || ownCommands.some(pattern => !(pattern instanceof RegExp) || pattern.global || pattern.sticky))
+    throw new TypeError('ownCommands must list regular expressions without the g or y flag')
   return Object.freeze({
     name,
     packageName,
     kinds: Object.freeze([...new Set<ToolKind>(kinds)]),
     statusMessage,
     timeout,
+    ownCommands: Object.freeze([...ownCommands]),
     // runHook hands the check only the kinds it listed, which is what makes
     // the narrower parameter safe to widen.
     check: check as HookPlugin['check'],

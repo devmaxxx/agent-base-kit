@@ -60,6 +60,15 @@ export interface HookDefinition<K extends ToolKind> {
    * the call run, and Claude Code blocks it.
    */
   timeout?: number
+  /**
+   * Commands an earlier version of the hook wrote in a form install no longer
+   * recognizes, such as a path that does not sit in a directory named after
+   * the hook. A command any pattern matches is taken as this hook's own:
+   * install replaces it and uninstall removes it. Each pattern is tested
+   * against the whole command, so anchor it with `^` and `$`, or it may take
+   * another hook's entry for this one.
+   */
+  ownCommands?: readonly RegExp[]
 }
 
 /** A checked hook definition, as {@link defineHook} returns it. */
@@ -69,6 +78,7 @@ export interface HookPlugin {
   readonly kinds: readonly ToolKind[]
   readonly statusMessage: string
   readonly timeout: number
+  readonly ownCommands: readonly RegExp[]
   /** Called only with a call whose kind is in `kinds`. */
   readonly check: (call: ToolCall, context: HookContext) => HookVerdict | Promise<HookVerdict>
 }

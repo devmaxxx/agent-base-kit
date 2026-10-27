@@ -27,6 +27,13 @@ describe('defineHook', () => {
     for (const timeout of [0, -1, 1.5, Number.NaN])
       expect(() => defineHook({ ...valid, timeout }), String(timeout)).toThrow(/^timeout /)
   })
+
+  it('keeps ownCommands, and refuses one that is not a pattern or keeps state between tests', () => {
+    expect(defineHook(valid).ownCommands).toEqual([])
+    expect(defineHook({ ...valid, ownCommands: [/^old$/] }).ownCommands).toEqual([/^old$/])
+    for (const ownCommands of [['^old$'], [/^old$/g], [/^old$/y], /^old$/] as never[])
+      expect(() => defineHook({ ...valid, ownCommands }), String(ownCommands)).toThrow(/^ownCommands /)
+  })
 })
 
 describe('matcherFor', () => {
