@@ -47,11 +47,23 @@ describe('runHook', () => {
       { kind: 'write', path: '/p/a.js', content: 'x' },
       { kind: 'write', path: '/p/n.ipynb', content: 'cell' },
       { kind: 'edit', path: '/p/a.js', before: 'a', after: 'b' },
-      { kind: 'edit', path: '/p/a.js', before: 'a\nc', after: 'b\nd' },
+      { kind: 'edit', path: '/p/a.js', before: 'a', after: 'b' },
+      { kind: 'edit', path: '/p/a.js', before: 'c', after: 'd' },
       { kind: 'patch', patch: '*** Begin Patch' },
       { kind: 'patch', patch: '*** Begin Patch' },
       { kind: 'patch', patch: '*** Begin Patch' },
     ])
+  })
+
+  it('checks each edit of a MultiEdit on its own, so another edit\'s old_string cannot vouch for what one adds', async () => {
+    const plugin = defineHook({
+      name: 'adds-nothing',
+      kinds: ['edit'],
+      check: call => call.after.includes('TOKEN') && !call.before.includes('TOKEN') ? { block: true, reason: 'adds TOKEN' } : { block: false },
+    })
+    const edits = [{ old_string: 'a', new_string: 'TOKEN' }, { old_string: 'TOKEN b', new_string: 'TOKEN c' }]
+    expect(await run(payload('MultiEdit', { file_path: 'a.js', edits }), plugin)).toEqual({ code: 2, stderr: 'adds TOKEN\n' })
+    expect(await run(payload('MultiEdit', { file_path: 'a.js', edits: edits.slice(1) }), plugin)).toEqual({ code: 0, stderr: '' })
   })
 
   it('reads an absent field or tool input as empty', async () => {

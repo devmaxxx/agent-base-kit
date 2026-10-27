@@ -115,7 +115,7 @@ Keep `check` well inside `timeout`, which defaults to 10 seconds.
 | --- | --- | --- | --- |
 | `shell` | `{ kind: 'shell', command }` | `Bash` | `Bash` |
 | `write` | `{ kind: 'write', path, content }` | `Write`, `NotebookEdit` | `apply_patch` |
-| `edit` | `{ kind: 'edit', path, before, after }` (a MultiEdit's edits joined by newlines) | `Edit`, `MultiEdit` | `apply_patch` |
+| `edit` | `{ kind: 'edit', path, before, after }` (a MultiEdit's edits one call each) | `Edit`, `MultiEdit` | `apply_patch` |
 | `patch` | `{ kind: 'patch', patch }` (the whole patch text) | none | `apply_patch` |
 | `tool` | `{ kind: 'tool', name, input }` (the tool's input object) | the names in `tools` | the names in `tools` |
 

@@ -50,11 +50,25 @@ function editList(input: Record<string, unknown>): Record<string, unknown>[] {
 
 // Claude Code and Codex share the hook protocol; they differ in tool names and
 // in Codex's apply_patch, which carries a whole patch instead of one file.
+//
+// A MultiEdit is one call per edit. Joined into one pair, a check that asks
+// whether `after` adds what `before` lacks would pass a token one edit adds
+// whenever another edit's old_string holds it, where the same edit made alone
+// would be caught.
+function toToolCalls(plugin: HookPlugin, tool: string, input: Record<string, unknown>): ToolCall[] {
+  if (tool !== 'MultiEdit')
+    return [toToolCall(plugin, tool, input)]
+  const path = stringField(input, 'file_path')
+  const edits = editList(input)
+  if (edits.length === 0)
+    return [{ kind: 'edit', path, before: '', after: '' }]
+  return edits.map(edit => ({ kind: 'edit', path, before: stringField(edit, 'old_string'), after: stringField(edit, 'new_string') }))
+}
+
 function toToolCall(plugin: HookPlugin, tool: string, input: Record<string, unknown>): ToolCall {
   if (plugin.tools.includes(tool))
     return { kind: 'tool', name: tool, input }
   const text = (key: string, from = input): string => stringField(from, key)
-  const joined = (key: string): string => editList(input).map(edit => text(key, edit)).join('\n')
   switch (tool) {
     case 'Bash':
       return { kind: 'shell', command: text('command') }
@@ -64,8 +78,6 @@ function toToolCall(plugin: HookPlugin, tool: string, input: Record<string, unkn
       return { kind: 'write', path: text('notebook_path'), content: text('new_source') }
     case 'Edit':
       return { kind: 'edit', path: text('file_path'), before: text('old_string'), after: text('new_string') }
-    case 'MultiEdit':
-      return { kind: 'edit', path: text('file_path'), before: joined('old_string'), after: joined('new_string') }
     case 'apply_patch':
       return { kind: 'patch', patch: text('command') || text('input') || text('patch') }
     default:
@@ -142,7 +154,8 @@ async function runOpenEvent(plugin: HookPlugin, event: OpenEvent, payload: Recor
  * shape, a check that throws or rejects, and a result that is not a verdict
  * all return 2 with the error on stderr, because any other exit lets the call
  * run unchecked. A tool the plugin did not ask for returns 0 without calling
- * the check. A payload with no `hook_event_name` is read as PreToolUse.
+ * the check. A MultiEdit calls the check once per edit and blocks on the first
+ * edit it blocks. A payload with no `hook_event_name` is read as PreToolUse.
  *
  * Stop and UserPromptSubmit always return 0. A block goes to stdout as
  * `{"decision":"block","reason":…}`, and a fault to stderr, letting the event
@@ -172,9 +185,14 @@ export async function runHook(plugin: HookPlugin, stdin: string, options: RunHoo
     const kind = plugin.tools.includes(tool) ? 'tool' : KIND_OF_TOOL.get(tool)
     if (kind === undefined || !plugin.kinds.includes(kind))
       return 0
-    const call = toToolCall(plugin, tool, record(payload.tool_input, 'tool_input'))
+    const calls = toToolCalls(plugin, tool, record(payload.tool_input, 'tool_input'))
     const cwd = stringField(payload, 'cwd') || (options.cwd ?? process.cwd())
-    verdict = verdictOf(await plugin.check(call, { cwd }))
+    verdict = { block: false }
+    for (const call of calls) {
+      verdict = verdictOf(await plugin.check(call, { cwd }))
+      if (verdict.block)
+        break
+    }
   }
   catch (error) {
     stderr(`Blocked by ${plugin.name}, it could not check the call: ${messageOf(error)}\n`)

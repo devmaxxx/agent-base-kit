@@ -8,11 +8,11 @@ export type ToolKind = 'shell' | 'write' | 'edit' | 'patch' | 'tool'
 
 /**
  * An agent's tool call, reduced to what a check needs. `shell` is Bash in
- * either agent; `write` is Claude Code's Write or NotebookEdit; `edit` is Edit
- * or MultiEdit, whose edits arrive joined by newlines; `patch` is Codex's
- * apply_patch, the whole patch text, which can add, change and delete files;
- * `tool` is one of the tools named in `tools`, with its input as the agent
- * sent it, an object.
+ * either agent; `write` is Claude Code's Write or NotebookEdit; `edit` is Edit,
+ * or one edit of a MultiEdit, which the check gets edit by edit; `patch` is
+ * Codex's apply_patch, the whole patch text, which can add, change and delete
+ * files; `tool` is one of the tools named in `tools`, with its input as the
+ * agent sent it, an object.
  */
 export type ToolCall
   = | { kind: 'shell', command: string }
