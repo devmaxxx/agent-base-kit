@@ -90,6 +90,11 @@ describe('a UserPromptSubmit check', () => {
     expect(await hook(shown, event('UserPromptSubmit', { prompt: 'x' }))).toEqual({ code: 0, stdout: `${JSON.stringify({ decision: 'block', reason: 'no' })}\n`, stderr: '' })
   })
 
+  it('blocks a prompt from Codex with only the fields Codex reads, even when hidePrompt is set', async () => {
+    const codex = event('UserPromptSubmit', { prompt: 'FORBIDDEN', turn_id: 't1', model: 'gpt-5' })
+    expect(await hook(guard(), codex)).toEqual({ code: 0, stdout: `${JSON.stringify({ decision: 'block', reason: 'guard: FORBIDDEN in the prompt' })}\n`, stderr: '' })
+  })
+
   it('lets the prompt pass when the check throws', async () => {
     const plugin = guard({ events: { UserPromptSubmit: { check: async () => Promise.reject(new Error('down')) } } })
     expect(await hook(plugin, event('UserPromptSubmit', { prompt: 'x' }))).toEqual({ code: 0, stdout: '', stderr: 'guard could not check the prompt, so it let it pass: down\n' })

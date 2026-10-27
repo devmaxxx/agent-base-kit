@@ -117,7 +117,10 @@ async function runOpenEvent(plugin: HookPlugin, event: OpenEvent, payload: Recor
       : verdictOf(await plugin.events.UserPromptSubmit!.check({ prompt: stringField(payload, 'prompt') }, { cwd }))
     if (!verdict.block)
       return 0
-    const hidden = event === 'UserPromptSubmit' && plugin.events.UserPromptSubmit!.hidePrompt
+    // Codex rejects any hookSpecificOutput field it does not know, and a reply
+    // it cannot read lets the prompt through, so the field goes only to Claude
+    // Code. Only Codex sends `turn_id`.
+    const hidden = event === 'UserPromptSubmit' && plugin.events.UserPromptSubmit!.hidePrompt && payload.turn_id === undefined
     stdout(`${JSON.stringify({
       decision: 'block',
       reason: verdict.reason,

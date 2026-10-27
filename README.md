@@ -145,7 +145,7 @@ defineHook({
 })
 ```
 
-A block goes to stdout as `{"decision":"block","reason":…}`. At Stop the agent keeps going with the reason as its next instruction; at UserPromptSubmit it drops the prompt and shows the reason, and `hidePrompt` keeps Claude Code from printing the prompt back under it. Both fail open, since an exit 2 at Stop would keep the agent going forever and one at UserPromptSubmit would drop every prompt:
+A block goes to stdout as `{"decision":"block","reason":…}`. At Stop the agent keeps going with the reason as its next instruction; at UserPromptSubmit it drops the prompt and shows the reason, and `hidePrompt` keeps Claude Code from printing the prompt back under it (Codex has no such field, and a reply carrying it would let the prompt through, so it is not sent there). Both fail open, since an exit 2 at Stop would keep the agent going forever and one at UserPromptSubmit would drop every prompt:
 
 | What happens | Exit |
 | --- | --- |
