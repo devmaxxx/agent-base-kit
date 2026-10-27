@@ -136,6 +136,12 @@ describe('cli', () => {
     seed()
     await run(['uninstall', 'claude'], where, { plugin: toyGuard(['shell'], 'policy-guard') })
     expect(entries(file)).toHaveLength(others.length + 1)
+
+    // A pattern that matches only part of a command takes none of them.
+    seed()
+    const loose = defineHook({ name: 'policy-guard', kinds: ['shell'], check: () => ({ block: false }), ownCommands: [/policy-guard/, /^old|hook/] })
+    expect(await run(['uninstall', 'claude'], where, { plugin: loose })).toBe(0)
+    expect(entries(file)).toHaveLength(others.length + 1)
   })
 
   it('refuses, and leaves the file as it is, when the settings are not an object it can extend', async () => {

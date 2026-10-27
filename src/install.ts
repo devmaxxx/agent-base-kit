@@ -70,14 +70,17 @@ const QUOTED = String.raw`(?:[^']|'\\'')*`
 // The bare `node '<path>' hook` form predates the pinned Node.js and the copy,
 // when the path was wherever the package sat; it needs a directory named
 // exactly after the plugin. Commands written before `|| exit 2` lack it.
-// Forms only the plugin knows it wrote come from its `ownCommands`.
+// Forms only the plugin knows it wrote come from its `ownCommands`, each
+// wrapped to match the whole command: unanchored, or anchored on one side of
+// an alternation only, it would take another hook's entry for this one.
 function ownHook(plugin: HookPlugin, entry: string): (command: string) => boolean {
   const name = escape(plugin.name)
   const pinned = String.raw`n='${QUOTED}'; \[ -x "\$n" \] \|\| n=node; "\$n" '${QUOTED}/\.${name}/current/[^/']+' hook`
   const bare = `node '${QUOTED}/${name}/(?:${QUOTED}/)?${escape(entry)}' hook`
   const project = `npx --no-install ${escape(plugin.packageName)} hook`
   const own = new RegExp(`^(?:${pinned}|${bare}|${project})(?: \\|\\| exit 2)?$`)
-  return command => own.test(command) || plugin.ownCommands.some(pattern => pattern.test(command))
+  const earlier = plugin.ownCommands.map(pattern => new RegExp(`^(?:${pattern.source})$`, pattern.flags))
+  return command => own.test(command) || earlier.some(pattern => pattern.test(command))
 }
 
 const builtFiles = (dir: string): string[] => readdirSync(dir).filter(name => name.endsWith('.mjs')).sort()

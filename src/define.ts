@@ -32,10 +32,10 @@ export function defineHook<const K extends ToolKind>(definition: HookDefinition<
   // Copied before the check: `some` skips the holes of a sparse list, and the
   // copy turns each into `undefined`. A global or sticky pattern keeps its
   // place between tests, so the same command would alternate between matching
-  // and not.
+  // and not; a multiline one would match a single line of the command.
   const patterns: unknown[] | null = Array.isArray(ownCommands) ? [...ownCommands] : null
-  if (patterns === null || patterns.some(pattern => !(pattern instanceof RegExp) || pattern.global || pattern.sticky))
-    throw new TypeError('ownCommands must list regular expressions without the g or y flag')
+  if (patterns === null || patterns.some(pattern => !(pattern instanceof RegExp) || pattern.global || pattern.multiline || pattern.sticky))
+    throw new TypeError('ownCommands must list regular expressions without the g, m or y flag')
   return Object.freeze({
     name,
     packageName,

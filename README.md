@@ -140,7 +140,7 @@ function writeClaudePlugin(dir: string, options: ClaudePluginOptions): string[]
 | `packageName` | `name` | The npm package a project install runs through `npx --no-install`. |
 | `statusMessage` | `Running <name>` | What the agent shows while the hook runs. |
 | `timeout` | `10` | Seconds the agent waits for the hook. |
-| `ownCommands` | `[]` | Patterns for commands an earlier version of your hook wrote, which install replaces and uninstall removes. Each is tested against the whole command, so anchor it with `^` and `$`; the `g` and `y` flags are refused. |
+| `ownCommands` | `[]` | Patterns for commands an earlier version of your hook wrote, which install replaces and uninstall removes. A pattern must match the whole command, not a part of it; the `g`, `m` and `y` flags are refused. |
 
 `runCli` is the only function that reads the home directory, the working directory and the Node.js path from the process; the others take them as arguments, which keeps tests away from your real `~`. `writeClaudePlugin` writes the files to ship the same hook as a Claude Code plugin instead; use either the plugin or `install claude`, not both.
 

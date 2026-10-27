@@ -64,9 +64,9 @@ export interface HookDefinition<K extends ToolKind> {
    * Commands an earlier version of the hook wrote in a form install no longer
    * recognizes, such as a path that does not sit in a directory named after
    * the hook. A command any pattern matches is taken as this hook's own:
-   * install replaces it and uninstall removes it. Each pattern is tested
-   * against the whole command, so anchor it with `^` and `$`, or it may take
-   * another hook's entry for this one.
+   * install replaces it and uninstall removes it. A pattern must match the
+   * whole command, not a part of it, and may not carry the `g`, `m` or `y`
+   * flag.
    */
   ownCommands?: readonly RegExp[]
 }
