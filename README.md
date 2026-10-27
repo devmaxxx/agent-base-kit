@@ -4,7 +4,7 @@
 
 # agent-base-kit
 
-**Run any Claude Code or Codex hook from a stable copy, on the Node.js that installed it.**
+**The base kit for Claude Code and Codex hooks: typed tool calls, install and uninstall, and Claude Code plugin files.**
 
 [![npm version](https://img.shields.io/npm/v/agent-base-kit?color=cb3837)](https://www.npmjs.com/package/agent-base-kit)
 [![npm downloads](https://img.shields.io/npm/dm/agent-base-kit)](https://www.npmjs.com/package/agent-base-kit)
@@ -14,28 +14,25 @@
 [![node](https://img.shields.io/node/v/agent-base-kit)](./package.json)
 [![license: MIT](https://img.shields.io/npm/l/agent-base-kit)](./LICENSE)
 
-[Why](#why) · [What you get](#what-you-get) · [Usage](#usage) · [The stable copy](#the-stable-copy) · [Fail-closed](#the-fail-closed-contract) · [Kinds](#kinds-and-matchers) · [API](#api)
+[Why](#why) · [What you get](#what-you-get) · [Usage](#usage) · [What install writes](#what-install-writes) · [Fail-closed](#the-fail-closed-contract) · [Kinds](#kinds-and-matchers) · [API](#api)
 
 </div>
 
 ## Why
 
-A [PreToolUse hook](https://code.claude.com/docs/en/hooks) is the last point where you can stop an agent's tool call. The agents treat every exit except 2 as "go on", so the hook has to keep running, and that is where hooks quietly fail:
+A [PreToolUse hook](https://code.claude.com/docs/en/hooks) is the last point where you can stop an agent's tool call. Every hook needs the same plumbing before its own check: read the agent's payload, write the agent's config without breaking anyone else's entries, keep running across Node.js upgrades, and block when the check cannot run, since the agents treat every exit except 2 as "go on".
 
-- an nvm or Homebrew upgrade deletes the global package the hook pointed at;
-- a project pins an older Node.js, and the hook starts on it and crashes;
-- an `npx` cache clean or a rebuild of a checkout swaps the code under every open session.
-
-Each of these lets every call through without a word. agent-base-kit is the part every hook needs and nobody wants to write twice: it installs your check as a hook that runs its own copy of your build on the Node.js that installed it, and blocks whenever that check cannot run. Reuse it for a secret scanner, a policy guard, or any other check.
+agent-base-kit is that plumbing, shared by every hook you build. You write the check; reuse the rest for a secret scanner, a policy guard, or any other hook.
 
 ## What you get
 
-- **A stable copy.** A user install copies your build to `~/.<name>/<build-id>/` and runs it from there, so upgrades, cache cleans and rebuilds do not touch a running hook.
-- **A pinned Node.js.** The hook runs on the Node.js that ran `install`, and falls back to `node` on PATH only if that one is gone.
+- **One function to write.** `check(call)` gets a typed call (`shell`, `write`, `edit` or `patch`) and returns `{ block, reason }`, sync or async.
+- **Both agents.** Claude Code and Codex, with matchers derived from the kinds you list.
 - **Fail-closed by default.** Unreadable payloads, throws, bad verdicts, hangs and a hook that cannot start all block.
 - **One command to install.** Your bin gets `install` and `uninstall` for `claude` or `codex`, at user or project scope.
 - **Other hooks left alone.** Install and uninstall touch only their own entry, and refuse a config they cannot extend safely.
-- **One function to write.** `check(call)` gets a typed call and returns `{ block, reason }`, sync or async.
+- **Survives upgrades.** A user install runs its own copy of your build on the Node.js that installed it, so an nvm or Homebrew upgrade or a rebuild does not switch it off.
+- **Claude Code plugin files.** One call writes the manifest, `hooks.json` and a marketplace.
 - **Zero dependencies**, ESM only, typed.
 
 ## Usage
@@ -71,7 +68,7 @@ npx no-force-push uninstall claude
 
 Requires Node.js 22 or later and a POSIX shell.
 
-## The stable copy
+## What install writes
 
 A user install (the default scope) does four things:
 
