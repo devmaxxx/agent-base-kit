@@ -86,7 +86,7 @@ n='/path/to/the/installing/node'; [ -x "$n" ] || n=node; "$n" '/home/you/.<name>
 
 Install replaces any entry it wrote before, at any event, and keeps every other one; an entry an earlier version wrote for an event this one no longer has is removed. It refuses, and changes nothing, when the settings file is not JSON, not an object with a `hooks` object, or has a `PreToolUse`, `Stop` or `UserPromptSubmit` that is not a list, or when `~/.<name>/current` exists and is not a link.
 
-`onInstall` runs once the config is written, for what else the hook needs, such as a skill copied into the agent's directory; `onUninstall` runs after uninstall. Each gets the agent, scope, home, working directory, bin and config file, and may return `{ notes, warnings }`, which the command line prints after the config file, to stdout and stderr. A step that throws puts the config back as it was and fails the command.
+`onInstall` runs once the config is written, for what else the hook needs, such as a skill copied into the agent's directory; `onUninstall` runs after uninstall. Each gets the agent, scope, home, working directory, bin and config file, and may return `{ notes, warnings }`, which the command line prints after the config file, to stdout and stderr. A step that throws puts the config and `~/.<name>/current` back as they were and fails the command, so the hooks already installed keep their build.
 
 A hook that wrote other commands before it moved to agent-base-kit lists them in `ownCommands`, so install replaces and uninstall removes those entries too.
 

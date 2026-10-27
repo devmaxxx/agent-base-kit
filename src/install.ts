@@ -1,7 +1,7 @@
 import type { Agent, HookEvent, HookPlugin, InstallNotes, InstallPlace, Scope } from './types'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import process from 'node:process'
 import { AGENTS, requireMatcher } from './agents'
@@ -196,6 +196,23 @@ function linkCurrent(root: string, id: string): string {
   return current
 }
 
+// Every entry already installed, for this agent and the other, runs the build
+// `current` names, so an install that fails after swapping it puts it back:
+// otherwise a failed upgrade would still upgrade the hooks it left in place.
+function restoreCurrent(root: string): () => void {
+  let previous: string | null = null
+  try {
+    previous = readlinkSync(join(root, 'current'))
+  }
+  catch {}
+  return () => {
+    if (previous === null)
+      rmSync(join(root, 'current'), { force: true })
+    else
+      linkCurrent(root, previous)
+  }
+}
+
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 
 // Rewriting a file of another shape would drop what the agent reads from it,
@@ -324,10 +341,10 @@ function withExtra(file: string, place: Omit<InstallPlace, 'file'>, write: () =>
  * that times out. The other events' commands do not, so they pass instead.
  * Then the plugin's `onInstall` runs.
  *
- * Throws, and leaves the config as it was, when the config is not a settings
- * object it can extend, when the plugin's kinds leave tools the agent routes
- * to it unchecked, when the build cannot be copied or does not run, or when
- * `onInstall` throws.
+ * Throws, and leaves the config and `current` as they were, when the config
+ * is not a settings object it can extend, when the plugin's kinds leave tools
+ * the agent routes to it unchecked, when the build cannot be copied or does
+ * not run, or when `onInstall` throws.
  */
 export function install(options: InstallOptions): InstallResult {
   const { plugin, agent, scope, script } = options
@@ -335,15 +352,24 @@ export function install(options: InstallOptions): InstallResult {
   const file = configFile(agent, scope, options)
   const settings = readSettings(file)
   let target = script
+  let restore = (): void => {}
   if (scope === 'user') {
     const root = join(options.home, `.${plugin.name}`)
     const id = copyBuild(plugin, script, root)
     probe(join(root, id, basename(script)), options.execPath)
+    restore = restoreCurrent(root)
     target = join(linkCurrent(root, id), basename(script))
   }
   const entries = entriesFor(plugin, agent, hookCommand(plugin, scope, target, options.execPath))
   const place = { agent, scope, home: options.home, cwd: options.cwd, script }
-  const lines = withExtra(file, place, () => configure(file, settings, ownHook(plugin, basename(script)), entries), plugin.onInstall)
+  let lines: ReturnType<typeof withExtra>
+  try {
+    lines = withExtra(file, place, () => configure(file, settings, ownHook(plugin, basename(script)), entries), plugin.onInstall)
+  }
+  catch (error) {
+    restore()
+    throw error
+  }
   const commands = Object.fromEntries(Object.entries(entries).map(([event, entry]) => [event, entry.hooks![0]!.command as string]))
   return { file, command: commands.PreToolUse, commands, ...lines }
 }

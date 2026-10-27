@@ -151,9 +151,9 @@ export interface HookDefinition<K extends ToolKind> {
   events?: EventDefinitions
   /**
    * Runs after install writes the config, to set up what else the hook needs,
-   * such as files in the agent's directory. Throwing puts the config back as
-   * it was and fails the install. Not run for a Claude Code plugin, which
-   * Claude Code installs itself.
+   * such as files in the agent's directory. Throwing puts the config and the
+   * `current` link back as they were and fails the install. Not run for a
+   * Claude Code plugin, which Claude Code installs itself.
    */
   onInstall?: (place: InstallPlace) => InstallNotes | void
   /** Runs after uninstall, even when the config held no entry; throwing puts the config back. */

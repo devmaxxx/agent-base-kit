@@ -1,6 +1,6 @@
 import type { CliIO, HookDefinition, HookPlugin, InstallPlace, ToolCall, ToolKind } from '../src'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { claudePluginFiles, createCli, defineHook, runHook } from '../src'
@@ -333,6 +333,29 @@ describe('install steps', () => {
     }
     expect(await cli(guard({ onInstall: () => ({ warnings: [1] }) as never }), ['install', 'codex'], where)).toEqual({ code: 1, stdout: '', stderr: 'guard: warnings is not a list of strings\n' })
     expect(existsSync(join(where.home, '.codex/hooks.json'))).toBe(false)
+  })
+
+  it('leave the hooks already installed on their build when they throw', async () => {
+    const where = place()
+    const current = join(where.home, '.guard/current')
+    const install = (plugin: HookPlugin, build: string) => createCli(plugin)(['install', 'claude'], {
+      stdin: () => '',
+      script: build,
+      node: 'v22.0.0',
+      execPath: process.execPath,
+      ...where,
+      stdout: () => {},
+      stderr: () => {},
+    })
+    const failing = guard({ onInstall: () => {
+      throw new Error('no skill source')
+    } })
+    expect(await install(failing, fakeBuild('first'))).toBe(1)
+    expect(existsSync(current)).toBe(false)
+    expect(await install(guard(), fakeBuild('old'))).toBe(0)
+    const installed = readlinkSync(current)
+    expect(await install(failing, fakeBuild('new'))).toBe(1)
+    expect(readlinkSync(current)).toBe(installed)
   })
 })
 
