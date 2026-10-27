@@ -348,7 +348,7 @@ describe('cli', () => {
         'Usage:',
         '  toy-guard install <claude|codex> [--project]   add the PreToolUse hook',
         '  toy-guard uninstall <claude|codex> [--project] remove it',
-        '  toy-guard hook                                 run as the hook (reads the tool call on stdin)',
+        '  toy-guard hook                                 run as the hook (reads the agent\'s payload on stdin)',
         '',
       ].join('\n'))
     }

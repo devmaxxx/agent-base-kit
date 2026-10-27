@@ -1,4 +1,4 @@
-import type { Agent, HookPlugin, Scope } from './types'
+import type { Agent, HookEvent, HookPlugin, InstallNotes, InstallPlace, Scope } from './types'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
@@ -25,11 +25,23 @@ export interface InstallOptions extends UninstallOptions {
   execPath: string
 }
 
-/** The config file written and, for an install, the command in it. */
+/** The config file written and, for an install, the commands in it. */
 export interface InstallResult {
   file: string
+  /** The PreToolUse command. */
   command?: string
+  /** The command written for each event. */
+  commands?: Partial<Record<HookEvent, string>>
+  /** What the plugin's `onInstall` or `onUninstall` returned, for stdout. */
+  notes: string[]
+  /** And for stderr. */
+  warnings: string[]
 }
+
+// Every event install writes to, and so every list it takes its own entries
+// out of: an entry an earlier version wrote for an event this one dropped is
+// removed too.
+const EVENTS: readonly HookEvent[] = ['PreToolUse', 'Stop', 'UserPromptSubmit']
 
 interface HookEntry {
   matcher?: string
@@ -47,9 +59,7 @@ const quote = (word: string): string => `'${word.replaceAll('\'', `'\\''`)}'`
 const escape = (text: string): string => text.replace(/[$()*+.?[\\\]^{|}]/g, '\\$&')
 
 // A project config is committed, so it names the package, not this machine's
-// path to it. A missing package or a moved script exits 1, which would let
-// every call run, so that becomes a block. Single quotes keep the shell from
-// expanding a `$` in the path.
+// path to it. Single quotes keep the shell from expanding a `$` in the path.
 //
 // A user hook runs on the Node.js that installed it, not on the `node` first
 // on PATH, which a project pinning an older version would change under every
@@ -57,8 +67,27 @@ const escape = (text: string): string => text.replace(/[$()*+.?[\\\]^{|}]/g, '\\
 // blocks there with a message when that one is too old.
 function hookCommand(plugin: HookPlugin, scope: Scope, script: string, node: string): string {
   if (scope === 'project')
-    return `npx --no-install ${plugin.packageName} hook || exit 2`
-  return `n=${quote(node)}; [ -x "$n" ] || n=node; "$n" ${quote(script)} hook || exit 2`
+    return `npx --no-install ${plugin.packageName} hook`
+  return `n=${quote(node)}; [ -x "$n" ] || n=node; "$n" ${quote(script)} hook`
+}
+
+// A missing package or a moved script exits 1, which lets a tool call run, so
+// at PreToolUse that becomes a block. The other events pass on any exit but 2,
+// which is what they should do when the hook cannot start.
+function entriesFor(plugin: HookPlugin, agent: Agent, command: string): Partial<Record<HookEvent, HookEntry>> {
+  const entry = (event: HookEvent, status: string, timeout: number): { type: string, command: string, timeout: number, statusMessage: string } =>
+    ({ type: 'command', command: event === 'PreToolUse' ? `${command} || exit 2` : command, timeout, statusMessage: status })
+  const { Stop, UserPromptSubmit } = plugin.events
+  return {
+    PreToolUse: {
+      matcher: requireMatcher(agent, plugin),
+      // Claude Code also blocks the call when the hook cannot start or times
+      // out, which `|| exit 2` cannot see. Codex has no such field.
+      hooks: [{ ...entry('PreToolUse', plugin.statusMessage, plugin.timeout), ...(agent === 'claude' ? { onFailure: 'block' } : {}) }],
+    },
+    ...(Stop ? { Stop: { hooks: [entry('Stop', Stop.statusMessage, Stop.timeout)] } } : {}),
+    ...(UserPromptSubmit ? { UserPromptSubmit: { hooks: [entry('UserPromptSubmit', UserPromptSubmit.statusMessage, UserPromptSubmit.timeout)] } } : {}),
+  }
 }
 
 const QUOTED = String.raw`(?:[^']|'\\'')*`
@@ -181,15 +210,19 @@ function readSettings(file: string): Settings {
   catch (error) {
     throw new Error(`${file} is not valid JSON (${(error as Error).message}); it was left unchanged`)
   }
-  // A `null` where the hooks object or the PreToolUse list would go is read as
+  // A `null` where the hooks object or an event's list would go is read as
   // absent, as the agents do, and the hook is written in; a wrong non-null
   // shape would lose what the agent reads, so it is refused.
   const hooks = isObject(settings) ? settings.hooks : undefined
-  const preToolUse = isObject(hooks) ? hooks.PreToolUse : undefined
   const wrongHooks = hooks !== undefined && hooks !== null && !isObject(hooks)
-  const wrongPreToolUse = preToolUse !== undefined && preToolUse !== null && !Array.isArray(preToolUse)
-  if (!isObject(settings) || wrongHooks || wrongPreToolUse)
-    throw new Error(`${file} does not hold a settings object with a hooks object and a PreToolUse list; it was left unchanged`)
+  const wrongList = EVENTS.find((event) => {
+    const list = isObject(hooks) ? hooks[event] : undefined
+    return list !== undefined && list !== null && !Array.isArray(list)
+  })
+  if (!isObject(settings) || wrongHooks)
+    throw new Error(`${file} does not hold a settings object with a hooks object; it was left unchanged`)
+  if (wrongList)
+    throw new Error(`${file} has a ${wrongList} that is not a list; it was left unchanged`)
   return settings as Settings
 }
 
@@ -212,51 +245,93 @@ function writeConfig(file: string, text: string): void {
   }
 }
 
-// Drops any earlier entry of this plugin first, so installing twice or after a
-// move leaves exactly one hook pointing at the current build. Entries it does
-// not understand are kept as they are. With nothing to add or remove the file
-// is not rewritten, so an uninstall that finds no hook keeps its formatting.
-function configure(file: string, settings: Settings, own: (command: string) => boolean, entry: HookEntry | null): void {
-  const hooks = settings.hooks ?? {}
-  const before = Array.isArray(hooks.PreToolUse) ? hooks.PreToolUse : []
-  let removed = 0
-  const kept = before
-    .map((item) => {
-      if (!Array.isArray(item?.hooks))
-        return item
-      const rest = item.hooks.filter(hook => !(typeof hook?.command === 'string' && own(hook.command)))
-      removed += item.hooks.length - rest.length
-      return { ...item, hooks: rest }
-    })
-    .filter(item => !Array.isArray(item?.hooks) || item.hooks.length > 0)
-  if (!entry && removed === 0)
+// Drops every earlier entry of this plugin first, in each event's list, so
+// installing twice or after a move leaves exactly one hook per event pointing
+// at the current build. Entries it does not understand are kept as they are.
+// With nothing to add or remove the file is not rewritten, so an uninstall
+// that finds no hook keeps its formatting.
+function configure(file: string, settings: Settings, own: (command: string) => boolean, entries: Partial<Record<HookEvent, HookEntry>>): void {
+  const hooks = { ...settings.hooks }
+  let changed = false
+  for (const event of EVENTS) {
+    const before = Array.isArray(hooks[event]) ? hooks[event] : []
+    const kept = before
+      .map((item) => {
+        if (!Array.isArray(item?.hooks))
+          return item
+        const rest = item.hooks.filter(hook => !(typeof hook?.command === 'string' && own(hook.command)))
+        changed ||= rest.length < item.hooks.length
+        return { ...item, hooks: rest }
+      })
+      .filter(item => !Array.isArray(item?.hooks) || item.hooks.length > 0)
+    const entry = entries[event]
+    if (entry) {
+      kept.push(entry)
+      changed = true
+    }
+    if (kept.length > 0)
+      hooks[event] = kept
+    else if (Array.isArray(hooks[event]))
+      delete hooks[event]
+  }
+  if (!changed)
     return
-  if (entry)
-    kept.push(entry)
-  settings.hooks = { ...hooks, PreToolUse: kept }
-  if (kept.length === 0)
-    delete settings.hooks.PreToolUse
+  settings.hooks = hooks
   writeConfig(file, `${JSON.stringify(settings, null, 2)}\n`)
 }
 
+function linesOf(value: unknown, field: string): string[] {
+  if (value === undefined)
+    return []
+  if (!Array.isArray(value) || value.some(line => typeof line !== 'string'))
+    throw new TypeError(`${field} is not a list of strings`)
+  return [...value]
+}
+
+// The extra step runs once the config is written, and a step that fails puts
+// the config back as it was, so the hook is never left installed without
+// what it needs, or removed while that stays.
+function withExtra(file: string, place: Omit<InstallPlace, 'file'>, write: () => void, extra: ((place: InstallPlace) => InstallNotes | void) | undefined): { notes: string[], warnings: string[] } {
+  const before = existsSync(file) ? readFileSync(file, 'utf8') : null
+  write()
+  if (!extra)
+    return { notes: [], warnings: [] }
+  try {
+    const result: unknown = extra({ ...place, file })
+    if (result !== undefined && !isObject(result))
+      throw new TypeError('an install step returned neither nothing nor { notes, warnings }')
+    return { notes: linesOf(result?.notes, 'notes'), warnings: linesOf(result?.warnings, 'warnings') }
+  }
+  catch (error) {
+    if (before === null)
+      rmSync(file, { force: true })
+    else if (readFileSync(file, 'utf8') !== before)
+      writeConfig(file, before)
+    throw error
+  }
+}
+
 /**
- * Adds the plugin's PreToolUse hook to one agent's config, replacing any entry
- * it wrote before and keeping every other one.
+ * Adds the plugin's hooks to one agent's config, PreToolUse and each event in
+ * its `events`, replacing any entry it wrote before, for any event, and
+ * keeping every other one.
  *
  * The user scope copies the bin's directory to `~/.<name>/<build-id>/`, checks
  * the copy runs, points `~/.<name>/current` at it and runs it from there on
  * `execPath`. The project scope runs `npx --no-install <packageName> hook`.
- * Either command ends in `|| exit 2`, so a hook that cannot start blocks the
- * call. The Claude Code entry also sets `onFailure: "block"` for a hook that
- * times out.
+ * The PreToolUse command ends in `|| exit 2`, so a hook that cannot start
+ * blocks the call, and the Claude Code entry sets `onFailure: "block"` for one
+ * that times out. The other events' commands do not, so they pass instead.
+ * Then the plugin's `onInstall` runs.
  *
  * Throws, and leaves the config as it was, when the config is not a settings
  * object it can extend, when the plugin's kinds leave tools the agent routes
- * to it unchecked, or when the build cannot be copied or does not run.
+ * to it unchecked, when the build cannot be copied or does not run, or when
+ * `onInstall` throws.
  */
 export function install(options: InstallOptions): InstallResult {
   const { plugin, agent, scope, script } = options
-  const matcher = requireMatcher(agent, plugin)
+  requireMatcher(agent, plugin)
   const file = configFile(agent, scope, options)
   const settings = readSettings(file)
   let target = script
@@ -266,26 +341,26 @@ export function install(options: InstallOptions): InstallResult {
     probe(join(root, id, basename(script)), options.execPath)
     target = join(linkCurrent(root, id), basename(script))
   }
-  const command = hookCommand(plugin, scope, target, options.execPath)
-  configure(file, settings, ownHook(plugin, basename(script)), {
-    matcher,
-    // Claude Code also blocks the call when the hook cannot start or times
-    // out, which `|| exit 2` cannot see. Codex has no such field.
-    hooks: [{ type: 'command', command, timeout: plugin.timeout, statusMessage: plugin.statusMessage, ...(agent === 'claude' ? { onFailure: 'block' } : {}) }],
-  })
-  return { file, command }
+  const entries = entriesFor(plugin, agent, hookCommand(plugin, scope, target, options.execPath))
+  const place = { agent, scope, home: options.home, cwd: options.cwd, script }
+  const lines = withExtra(file, place, () => configure(file, settings, ownHook(plugin, basename(script)), entries), plugin.onInstall)
+  const commands = Object.fromEntries(Object.entries(entries).map(([event, entry]) => [event, entry.hooks![0]!.command as string]))
+  return { file, command: commands.PreToolUse, commands, ...lines }
 }
 
 /**
- * Removes the plugin's hook from one agent's config, whichever form an earlier
- * install wrote, and keeps every other entry. The stable copy stays: another
- * agent may still run it. Throws, and leaves the file as it was, when it is not
- * a settings object.
+ * Removes the plugin's hooks from one agent's config, for every event and
+ * whichever form an earlier install wrote, keeps every other entry, and runs
+ * the plugin's `onUninstall`. The stable copy stays: another agent may still
+ * run it. Throws, and leaves the file as it was, when it is not a settings
+ * object or `onUninstall` throws.
  */
 export function uninstall(options: UninstallOptions): InstallResult {
-  const file = configFile(options.agent, options.scope, options)
-  if (!existsSync(file))
-    return { file }
-  configure(file, readSettings(file), ownHook(options.plugin, basename(options.script)), null)
-  return { file }
+  const { plugin, agent, scope, script } = options
+  const file = configFile(agent, scope, options)
+  const place = { agent, scope, home: options.home, cwd: options.cwd, script }
+  return { file, ...withExtra(file, place, () => {
+    if (existsSync(file))
+      configure(file, readSettings(file), ownHook(plugin, basename(script)), {})
+  }, plugin.onUninstall) }
 }

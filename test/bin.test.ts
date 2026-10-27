@@ -24,6 +24,15 @@ describe('a plugin bin built on runCli', () => {
     expect(hook(payload('Bash', { command: 'HANG' }))).toEqual({ status: 2, stderr: 'Blocked by toy-bin, its check never finished\n' })
   })
 
+  it('lets a reply pass when its Stop check never settles, and blocks one through stdout', () => {
+    const stop = (reply: string) => spawnSync(process.execPath, [built, 'hook'], { input: JSON.stringify({ hook_event_name: 'Stop', last_assistant_message: reply }) })
+    const hung = stop('HANG')
+    expect({ status: hung.status, stderr: hung.stderr.toString() }).toEqual({ status: 0, stderr: 'toy-bin let it pass, its check never finished\n' })
+    const blocked = stop('FORBIDDEN')
+    expect(blocked.status).toBe(0)
+    expect(JSON.parse(blocked.stdout.toString())).toEqual({ decision: 'block', reason: 'toy-bin: take FORBIDDEN out of the reply' })
+  })
+
   it('installs a hook that keeps working after the package it came from is gone', () => {
     const where = place()
     const pkg = mkdtempSync(join(tmpdir(), 'at-pkg-'))

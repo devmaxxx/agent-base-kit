@@ -43,6 +43,21 @@ const RESERVED = /^(?:claude|anthropics?)(?:-|$)|^cc-plugin-|(?:claude|anthropic
 // inside the plugin root, the only directory Claude Code copies.
 const ENTRY = /^[\w-][\w.-]*(?:\/[\w-][\w.-]*)*\.mjs$/
 
+// Claude Code puts the plugin's path in for the variable before the shell
+// runs, and its docs ask for double quotes around it.
+function pluginHooks(plugin: HookPlugin, matcher: string, entry: string): Record<string, unknown[]> {
+  const command = `node "\${CLAUDE_PLUGIN_ROOT}/${entry}" hook`
+  const hooks: Record<string, unknown[]> = {
+    PreToolUse: [{
+      matcher,
+      hooks: [{ type: 'command', command: `${command} || exit 2`, timeout: plugin.timeout, statusMessage: plugin.statusMessage, onFailure: 'block' }],
+    }],
+  }
+  for (const [event, hook] of Object.entries(plugin.events))
+    hooks[event] = [{ hooks: [{ type: 'command', command, timeout: hook.timeout, statusMessage: hook.statusMessage }] }]
+  return hooks
+}
+
 const json = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`
 
 function entryOf(entry: string): string {
@@ -57,10 +72,12 @@ function entryOf(entry: string): string {
  * to the package root: `.claude-plugin/plugin.json`, `hooks/hooks.json`, and
  * with `marketplace`, `.claude-plugin/marketplace.json`.
  *
- * The hook runs `node "${CLAUDE_PLUGIN_ROOT}/<entry>" hook || exit 2` with
- * `onFailure: "block"`, so a plugin that cannot start or times out blocks the
- * call. Claude Code copies the plugin and installs nothing into it, so the
- * entry's directory must hold the whole build. Throws when the plugin checks
+ * The PreToolUse hook runs `node "${CLAUDE_PLUGIN_ROOT}/<entry>" hook || exit 2`
+ * with `onFailure: "block"`, so a plugin that cannot start or times out blocks
+ * the call; each of the plugin's other events runs the same command without
+ * either, so it passes instead. Claude Code copies the plugin and installs
+ * nothing into it, and the plugin's `onInstall` does not run, so the entry's
+ * directory must hold the whole build. Throws when the plugin checks
  * no tool Claude Code has, or a field would make Claude Code refuse the
  * plugin.
  */
@@ -74,22 +91,7 @@ export function claudePluginFiles(options: ClaudePluginOptions): Record<string, 
     throw new TypeError(`homepage ${JSON.stringify(homepage)} is not a URL`)
   const files: Record<string, string> = {
     '.claude-plugin/plugin.json': json({ name: plugin.name, version, description, author, homepage, repository, license, keywords }),
-    'hooks/hooks.json': json({
-      hooks: {
-        PreToolUse: [{
-          matcher,
-          hooks: [{
-            type: 'command',
-            // Claude Code puts the plugin's path in for the variable before the
-            // shell runs, and its docs ask for double quotes around it.
-            command: `node "\${CLAUDE_PLUGIN_ROOT}/${entry}" hook || exit 2`,
-            timeout: plugin.timeout,
-            statusMessage: plugin.statusMessage,
-            onFailure: 'block',
-          }],
-        }],
-      },
-    }),
+    'hooks/hooks.json': json({ hooks: pluginHooks(plugin, matcher, entry) }),
   }
   if (marketplace) {
     if (!MARKETPLACE_NAME.test(marketplace.name))
