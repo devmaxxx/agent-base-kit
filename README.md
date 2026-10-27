@@ -4,7 +4,7 @@
 
 # agent-base-kit
 
-**Turn any check into a fail-closed PreToolUse hook for Claude Code and Codex. One function in, a verdict out. Zero dependencies.**
+**The base kit for building add-ons for coding agents like Claude Code and Codex. It starts with fail-closed PreToolUse hooks: one function in, a verdict out. Zero dependencies.**
 
 [![npm version](https://img.shields.io/npm/v/agent-base-kit?color=cb3837)](https://www.npmjs.com/package/agent-base-kit)
 [![npm downloads](https://img.shields.io/npm/dm/agent-base-kit)](https://www.npmjs.com/package/agent-base-kit)
@@ -39,9 +39,9 @@
 
 ## Why
 
-A [PreToolUse hook](https://code.claude.com/docs/en/hooks) is the last point where you can stop an agent's tool call before it runs. Writing one well is mostly not about the check. The agents treat every exit except 2 as "go on", so a hook that crashes, cannot parse its input, or loses its Node.js after an upgrade lets every call through without a word.
+Every add-on for a coding agent needs the same plumbing before its own logic: parse the agent's payload, write its config without breaking anyone else's entries, survive a Node.js upgrade, package for a plugin marketplace. agent-base-kit is that plumbing, shared across agents, so your add-on carries only what is its own.
 
-agent-base-kit is that plumbing, for any guard you build. You write the check; it makes sure the check actually runs, and blocks when it cannot.
+It starts with [PreToolUse hooks](https://code.claude.com/docs/en/hooks), the last point where you can stop a tool call before it runs. The agents treat every exit except 2 as "go on", so a hook that crashes, cannot parse its input, or loses its Node.js lets every call through without a word. You write the check; agent-base-kit makes sure it runs, and blocks when it cannot.
 
 ## Features
 
@@ -115,7 +115,7 @@ npx no-force-push hook                      # what the agent runs, with the tool
 
 ### Why a devDependency
 
-A user-scope install copies the `.mjs` files next to your bin into `~/.<name>/<build-id>/` and runs them from there. A runtime dependency would be imported from `node_modules`, and the copy has none. List agent-base-kit under `devDependencies` instead, and tsdown bundles it into your build. It also inlines its types into your `.d.mts`, so `export type { ToolCall } from 'agent-base-kit'` works for your users. If the copy cannot start anyway, `install` refuses and says why. It runs the copy once before writing any config.
+A user install copies the `.mjs` files next to your bin into `~/.<name>/<build-id>/` and runs that copy, which has no `node_modules`. So list agent-base-kit under `devDependencies` and let tsdown bundle it, types included: `export type { ToolCall } from 'agent-base-kit'` still works for your users. `install` runs the copy once before writing any config, and refuses with the reason if it cannot start.
 
 ## Kinds and matchers
 
@@ -130,7 +130,7 @@ A user-scope install copies the `.mjs` files next to your bin into `~/.<name>/<b
 
 `check` is typed to the kinds you list. It is never called with any other kind, even if a hand-written matcher sends one.
 
-Codex sends every file change as one `apply_patch`. A plugin whose kinds include `write` or `edit` but not `patch` would match those calls and then never see them. So `install codex` refuses that plugin until you add `patch` and handle the patch text. A plugin with no tool in an agent, such as `['patch']` for Claude Code, is refused the same way.
+Codex sends every file change as one `apply_patch`. A plugin with `write` or `edit` but no `patch` would match those calls and never see them, so `install codex` refuses it until you add `patch`. A plugin with no tool in an agent, such as `['patch']` for Claude Code, is refused too.
 
 ## The fail-closed contract
 
@@ -210,7 +210,7 @@ This writes three files:
 - `hooks/hooks.json` holds the hook: `node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" hook || exit 2`, with the matcher from `kinds`, your `timeout` and `statusMessage`, and `"onFailure": "block"`.
 - `.claude-plugin/marketplace.json` is written only with `marketplace`. It is a one-plugin marketplace whose source is your npm package.
 
-The build is not committed to git, and Claude Code copies a plugin as it is, without building it. So the marketplace fetches the plugin from npm, where `dist` is published. Add `.claude-plugin` and `hooks` to `files` in package.json, publish, and commit `.claude-plugin/marketplace.json` to the repository. Users then run:
+Claude Code copies a plugin as it is, without building it, and `dist` is not in git, so the marketplace fetches the plugin from npm. Add `.claude-plugin` and `hooks` to `files` in package.json, publish, and commit `.claude-plugin/marketplace.json`. Users then run:
 
 ```text
 /plugin marketplace add you/no-force-push
@@ -241,7 +241,7 @@ function writeClaudePlugin(dir: string, options: ClaudePluginOptions): string[]
 
 - **Async checks.** A sync-only API would have to break later to allow I/O. A promise costs nothing now.
 - **The reason is printed as is.** Your plugin owns its message, so start it with the plugin's name. Errors get a `Blocked by <name>, it could not check the call: …` prefix.
-- **Which entries count as its own.** The `npx` form must match exactly. The pinned form matches any file under `~/.<name>/current/`, so a bin renamed between releases still replaces its old entry. The bare `node '<path>' hook` form from before the copy existed needs a directory named exactly after the plugin. So a hook that only mentions the plugin, or another plugin whose path merely contains this one's name, is never removed.
+- **Which entries count as its own.** The `npx` form must match exactly. The pinned form matches any file under `~/.<name>/current/`, so a bin renamed between releases still replaces its old entry. The older bare `node '<path>' hook` form needs a directory named exactly after the plugin. A hook that only mentions the plugin, or whose path merely contains its name, is never removed.
 - **POSIX shells only.** Hook commands rely on `|| exit 2` and single-quoted paths, so Windows is not supported yet.
 
 ## Contributing
