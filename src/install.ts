@@ -70,12 +70,17 @@ const QUOTED = String.raw`(?:[^']|'\\'')*`
 // The bare `node '<path>' hook` form predates the pinned Node.js and the copy,
 // when the path was wherever the package sat; it needs a directory named
 // exactly after the plugin. Commands written before `|| exit 2` lack it.
-function ownHook(plugin: HookPlugin, entry: string): RegExp {
+// Forms only the plugin knows it wrote come from its `ownCommands`, each
+// wrapped to match the whole command: unanchored, or anchored on one side of
+// an alternation only, it would take another hook's entry for this one.
+function ownHook(plugin: HookPlugin, entry: string): (command: string) => boolean {
   const name = escape(plugin.name)
   const pinned = String.raw`n='${QUOTED}'; \[ -x "\$n" \] \|\| n=node; "\$n" '${QUOTED}/\.${name}/current/[^/']+' hook`
   const bare = `node '${QUOTED}/${name}/(?:${QUOTED}/)?${escape(entry)}' hook`
   const project = `npx --no-install ${escape(plugin.packageName)} hook`
-  return new RegExp(`^(?:${pinned}|${bare}|${project})(?: \\|\\| exit 2)?$`)
+  const own = new RegExp(`^(?:${pinned}|${bare}|${project})(?: \\|\\| exit 2)?$`)
+  const earlier = plugin.ownCommands.map(pattern => new RegExp(`^(?:${pattern.source})$`, pattern.flags))
+  return command => own.test(command) || earlier.some(pattern => pattern.test(command))
 }
 
 const builtFiles = (dir: string): string[] => readdirSync(dir).filter(name => name.endsWith('.mjs')).sort()
@@ -211,7 +216,7 @@ function writeConfig(file: string, text: string): void {
 // move leaves exactly one hook pointing at the current build. Entries it does
 // not understand are kept as they are. With nothing to add or remove the file
 // is not rewritten, so an uninstall that finds no hook keeps its formatting.
-function configure(file: string, settings: Settings, own: RegExp, entry: HookEntry | null): void {
+function configure(file: string, settings: Settings, own: (command: string) => boolean, entry: HookEntry | null): void {
   const hooks = settings.hooks ?? {}
   const before = Array.isArray(hooks.PreToolUse) ? hooks.PreToolUse : []
   let removed = 0
@@ -219,7 +224,7 @@ function configure(file: string, settings: Settings, own: RegExp, entry: HookEnt
     .map((item) => {
       if (!Array.isArray(item?.hooks))
         return item
-      const rest = item.hooks.filter(hook => !(typeof hook?.command === 'string' && own.test(hook.command)))
+      const rest = item.hooks.filter(hook => !(typeof hook?.command === 'string' && own(hook.command)))
       removed += item.hooks.length - rest.length
       return { ...item, hooks: rest }
     })

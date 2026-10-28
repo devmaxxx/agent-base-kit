@@ -105,6 +105,46 @@ describe('cli', () => {
     expect(entries(file)).toEqual(others)
   })
 
+  it('takes a command one of ownCommands matches as its own, and keeps the rest', async () => {
+    const where = place()
+    const file = join(where.home, '.claude/settings.json')
+    const plugin = defineHook({
+      name: 'policy-guard',
+      kinds: ['shell'],
+      check: () => ({ block: false }),
+      // Upper case under `i`, so dropping the flags would lose the entry.
+      ownCommands: [/^node '(?:[^']|'\\'')*policy-guard(?:[^']|'\\'')*\/CLI\.mjs' hook(?: \|\| exit 2)?$/i],
+    })
+    const legacy = `node '/src/policy-guard-fork/dist/cli.mjs' hook || exit 2`
+    const others = [
+      { matcher: 'Bash', hooks: [{ type: 'command', command: `node '/src/policy-guard-fork/dist/log.mjs' hook` }] },
+      { matcher: 'Bash', hooks: [{ type: 'command', command: `node '/src/policy-guard-fork/dist/cli.mjs' hook; echo done` }] },
+      { matcher: 'Bash', hooks: [{ type: 'command', command: 'npx --no-install policy-guard-audit hook' }] },
+    ]
+    const seed = (): void => writeFileSync(file, JSON.stringify({ hooks: { PreToolUse: [...others, { matcher: 'Bash', hooks: [{ type: 'command', command: legacy }] }] } }))
+    mkdirSync(dirname(file))
+
+    seed()
+    expect(await run(['uninstall', 'claude'], where, { plugin })).toBe(0)
+    expect(entries(file)).toEqual(others)
+
+    seed()
+    expect(await run(['install', 'claude'], where, { plugin })).toBe(0)
+    expect(entries(file).slice(0, -1)).toEqual(others)
+    expect(commandIn(file)).toMatch(/\/\.policy-guard\/current\/cli\.mjs' hook \|\| exit 2$/)
+
+    // Without the pattern the same entry belongs to some other hook.
+    seed()
+    expect(await run(['uninstall', 'claude'], where, { plugin: toyGuard(['shell'], 'policy-guard') })).toBe(0)
+    expect(entries(file)).toHaveLength(others.length + 1)
+
+    // A pattern that matches only part of a command takes none of them.
+    seed()
+    const loose = defineHook({ name: 'policy-guard', kinds: ['shell'], check: () => ({ block: false }), ownCommands: [/policy-guard/, /^old|hook/] })
+    expect(await run(['uninstall', 'claude'], where, { plugin: loose })).toBe(0)
+    expect(entries(file)).toHaveLength(others.length + 1)
+  })
+
   it('refuses, and leaves the file as it is, when the settings are not an object it can extend', async () => {
     for (const text of ['null', '[]', '"x"', '{', '{"hooks": []}', '{"hooks": {"PreToolUse": {}}}']) {
       const where = place()
