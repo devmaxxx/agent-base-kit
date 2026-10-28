@@ -1,4 +1,4 @@
-import type { Agent, HookPlugin, ToolKind } from './types'
+import type { Agent, HookEvent, HookPlugin, ToolKind } from './types'
 
 export const AGENTS = {
   claude: { label: 'Claude Code', dir: '.claude', file: 'settings.json' },
@@ -19,6 +19,7 @@ const SELECTED_BY: Record<ToolKind, readonly ToolKind[]> = {
   write: ['write'],
   edit: ['edit'],
   patch: ['write', 'edit', 'patch'],
+  tool: [],
 }
 
 // The hook is not told which agent called it, so a tool name means the same
@@ -39,13 +40,19 @@ export function matcherFor(agent: Agent, kinds: readonly ToolKind[]): string {
 }
 
 // A matcher that routes calls the check never sees would look installed and
-// check nothing, so it is refused with what to change.
+// check nothing, so it is refused with what to change. Named tools follow the
+// agent's own; both agents name an MCP tool the same way.
 export function requireMatcher(agent: Agent, plugin: HookPlugin): string {
   const tools = selected(agent, plugin.kinds)
-  if (tools.length === 0)
+  if (tools.length === 0 && plugin.tools.length === 0)
     throw new Error(`${plugin.name} checks ${plugin.kinds.join(', ')} calls, which ${AGENTS[agent].label} does not make`)
   const unseen = tools.filter(([, kind]) => !plugin.kinds.includes(kind)).map(([tool]) => tool)
   if (unseen.length > 0)
     throw new Error(`${AGENTS[agent].label} sends file changes as ${unseen.join(', ')}, which ${plugin.name} does not take; add 'patch' to its kinds`)
-  return tools.map(([tool]) => tool).join('|')
+  return [...tools.map(([tool]) => tool), ...plugin.tools].join('|')
 }
+
+// The hook is told its event and agent rather than reading them from the
+// payload, so a payload too broken to read still exits as its event must, and
+// a reply carries only the fields its agent accepts.
+export const hookFlags = (event: HookEvent, agent: Agent): string => `--event ${event} --agent ${agent}`

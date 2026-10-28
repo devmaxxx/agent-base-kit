@@ -29,8 +29,8 @@ describe('cli', () => {
   const read = (file: string): any => JSON.parse(readFileSync(file, 'utf8'))
   const entries = (file: string): any[] => read(file).hooks.PreToolUse
   const commandIn = (file: string): string => entries(file).at(-1).hooks[0].command
-  const OWN = /^n='.+'; \[ -x "\$n" \] \|\| n=node; "\$n" '.+\/\.toy-guard\/current\/cli\.mjs' hook \|\| exit 2$/
-  const scriptOf = (command: string): string => realpathSync(command.slice(command.indexOf(`"$n" '`) + 6, -16))
+  const OWN = /^n='.+'; \[ -x "\$n" \] \|\| n=node; "\$n" '.+\/\.toy-guard\/current\/cli\.mjs' hook --event PreToolUse --agent claude \|\| exit 2$/
+  const scriptOf = (command: string): string => realpathSync(command.slice(command.indexOf(`"$n" '`) + 6, command.lastIndexOf(`' hook `)))
   // The hook as the agent runs it: through sh, with the tool call on stdin.
   const sh = (command: string, env: Record<string, string>, input = payload('Bash', { command: 'ls' })) => {
     const ran = spawnSync('/bin/sh', ['-c', command], { input, env })
@@ -131,7 +131,7 @@ describe('cli', () => {
     seed()
     expect(await run(['install', 'claude'], where, { plugin })).toBe(0)
     expect(entries(file).slice(0, -1)).toEqual(others)
-    expect(commandIn(file)).toMatch(/\/\.policy-guard\/current\/cli\.mjs' hook \|\| exit 2$/)
+    expect(commandIn(file)).toMatch(/\/\.policy-guard\/current\/cli\.mjs' hook --event PreToolUse --agent claude \|\| exit 2$/)
 
     // Without the pattern the same entry belongs to some other hook.
     seed()
@@ -225,7 +225,7 @@ describe('cli', () => {
     rmSync(dirname(from), { recursive: true })
     expect(readFileSync(first, 'utf8')).toBe(`import './chunk.mjs' // one`)
     await run(['install', 'codex'], where, { script: fakeBuild('one') })
-    expect(commandIn(join(where.home, '.codex/hooks.json'))).toBe(commandIn(join(where.home, '.claude/settings.json')))
+    expect(commandIn(join(where.home, '.codex/hooks.json'))).toBe(commandIn(join(where.home, '.claude/settings.json')).replace('--agent claude', '--agent codex'))
     expect(scriptOf(commandIn(join(where.home, '.codex/hooks.json')))).toBe(first)
     await run(['install', 'claude'], where, { script: fakeBuild('two') })
     const second = scriptOf(commandIn(join(where.home, '.claude/settings.json')))
@@ -262,7 +262,7 @@ describe('cli', () => {
     await run(['install', 'claude'], where, { script: build, execPath: join(nodeDir, 'node') })
     const file = join(where.home, '.claude/settings.json')
     const env = { HOME: where.home, PATH: `${pathBin}:/usr/bin:/bin` }
-    expect(sh(commandIn(file), env)).toEqual({ status: 0, stdout: 'hook', stderr: '' })
+    expect(sh(commandIn(file), env)).toEqual({ status: 0, stdout: 'hook --event PreToolUse --agent claude', stderr: '' })
     rmSync(join(nodeDir, 'node'))
     expect(sh(commandIn(file), env)).toEqual({ status: 2, stdout: '', stderr: 'path\n' })
     expect(entries(file)[0].hooks[0].onFailure).toBe('block')
@@ -288,7 +288,7 @@ describe('cli', () => {
     const where = place()
     expect(await run(['install', 'codex', '--project'], where, {})).toBe(0)
     const file = join(where.cwd, '.codex/hooks.json')
-    expect(commandIn(file)).toBe('npx --no-install toy-guard hook || exit 2')
+    expect(commandIn(file)).toBe('npx --no-install toy-guard hook --event PreToolUse --agent codex || exit 2')
     expect(sh(commandIn(file), { PATH: '/nonexistent' }).status).toBe(2)
     expect(existsSync(join(where.home, '.codex'))).toBe(false)
     expect(existsSync(join(where.home, '.toy-guard'))).toBe(false)
@@ -346,9 +346,9 @@ describe('cli', () => {
       expect(await run(args, where), args.join(' ')).toBe(1)
       expect(stderr).toBe([
         'Usage:',
-        '  toy-guard install <claude|codex> [--project]   add the PreToolUse hook',
-        '  toy-guard uninstall <claude|codex> [--project] remove it',
-        '  toy-guard hook                                 run as the hook (reads the tool call on stdin)',
+        '  toy-guard install <claude|codex> [--project]              add the PreToolUse hook',
+        '  toy-guard uninstall <claude|codex> [--project]            remove it',
+        '  toy-guard hook [--event <event>] [--agent <claude|codex>] run as the hook (reads the agent\'s payload on stdin)',
         '',
       ].join('\n'))
     }

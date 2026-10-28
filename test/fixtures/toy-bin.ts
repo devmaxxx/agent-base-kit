@@ -12,6 +12,15 @@ export const plugin = defineHook({
       return new Promise(() => {})
     return text.includes('FORBIDDEN') ? { block: true, reason: 'toy-bin: FORBIDDEN is not allowed' } : { block: false }
   },
+  events: {
+    Stop: {
+      check({ reply }): HookVerdict | Promise<HookVerdict> {
+        if (reply.includes('HANG'))
+          return new Promise(() => {})
+        return reply.includes('FORBIDDEN') ? { block: true, reason: 'toy-bin: take FORBIDDEN out of the reply' } : { block: false }
+      },
+    },
+  },
 })
 
 void runCli(plugin, import.meta.url)

@@ -14,7 +14,7 @@
 [![node](https://img.shields.io/node/v/agent-base-kit)](./package.json)
 [![license: MIT](https://img.shields.io/npm/l/agent-base-kit)](./LICENSE)
 
-[Why](#why) · [What you get](#what-you-get) · [Usage](#usage) · [What install writes](#what-install-writes) · [Fail-closed](#the-fail-closed-contract) · [Kinds](#kinds-and-matchers) · [API](#api)
+[Why](#why) · [What you get](#what-you-get) · [Usage](#usage) · [What install writes](#what-install-writes) · [Fail-closed](#the-fail-closed-contract) · [Kinds](#kinds-and-matchers) · [Other events](#stop-and-userpromptsubmit) · [API](#api)
 
 </div>
 
@@ -26,7 +26,8 @@ agent-base-kit is that plumbing, shared by every hook you build. You write the c
 
 ## What you get
 
-- **One function to write.** `check(call)` gets a typed call (`shell`, `write`, `edit` or `patch`) and returns `{ block, reason }`, sync or async.
+- **One function to write.** `check(call)` gets a typed call (`shell`, `write`, `edit`, `patch`, or a named tool such as an MCP server's) and returns `{ block, reason }`, sync or async.
+- **Stop and UserPromptSubmit too.** Check the reply before the turn ends or the prompt before the model sees it, failing open where a broken hook would trap the session.
 - **Both agents.** Claude Code and Codex, with matchers derived from the kinds you list.
 - **Fail-closed by default.** Unreadable payloads, throws, bad verdicts, hangs and a hook that cannot start all block.
 - **One command to install.** Your bin gets `install` and `uninstall` for `claude` or `codex`, at user or project scope.
@@ -78,12 +79,16 @@ A user install (the default scope) does four things:
 4. **Writes the hook:**
 
 ```sh
-n='/path/to/the/installing/node'; [ -x "$n" ] || n=node; "$n" '/home/you/.<name>/current/cli.mjs' hook || exit 2
+n='/path/to/the/installing/node'; [ -x "$n" ] || n=node; "$n" '/home/you/.<name>/current/cli.mjs' hook --event PreToolUse --agent claude || exit 2
 ```
 
-`--project` writes `npx --no-install <packageName> hook || exit 2` instead, which is safe to commit. Uninstall removes the entry and leaves the copy, since another agent may still run it.
+`--project` writes `npx --no-install <packageName> hook --event PreToolUse --agent claude || exit 2` instead, which is safe to commit. Each of the plugin's [other events](#stop-and-userpromptsubmit) gets an entry of its own with the same command, naming its own event, minus `|| exit 2`. Uninstall removes every entry and leaves the copy, since another agent may still run it.
 
-Install replaces any entry it wrote before and keeps every other one. It refuses, and changes nothing, when the settings file is not JSON or not an object with a `hooks` object and a `PreToolUse` list, or when `~/.<name>/current` exists and is not a link.
+`--event` tells the hook which event it runs for without reading the payload, so a Stop or UserPromptSubmit payload that arrives cut short or empty still passes instead of being blocked as unreadable. `--agent` tells it which agent to answer, so a prompt block sent to Codex carries only the fields Codex accepts. A command written before the flags existed still works: the hook then takes the event from the payload's `hook_event_name`, and treats a UserPromptSubmit payload carrying `turn_id` (which Codex's input schema requires and Claude Code does not send) as Codex's. Install recognizes those older commands as its own and replaces them; Codex asks to trust the hook once more, since its command changed.
+
+Install replaces any entry it wrote before, at any event, and keeps every other one; an entry an earlier version wrote for an event this one no longer has is removed. It refuses, and changes nothing, when the settings file is not JSON, not an object with a `hooks` object, or has a `PreToolUse`, `Stop` or `UserPromptSubmit` that is not a list, or when `~/.<name>/current` exists and is not a link.
+
+`onInstall` runs once the config is written, for what else the hook needs, such as a skill copied into the agent's directory; `onUninstall` runs after uninstall. Each gets the agent, scope, home, working directory, bin and config file, and may return `{ notes, warnings }`, which the command line prints after the config file, to stdout and stderr. A step that throws puts the config and `~/.<name>/current` back as they were and fails the command, so the hooks already installed keep their build.
 
 A hook that wrote other commands before it moved to agent-base-kit lists them in `ownCommands`, so install replaces and uninstall removes those entries too.
 
@@ -96,8 +101,10 @@ The hook exits 0 only when your check passes the call:
 | `check` returns `{ block: false }` | 0 |
 | `check` returns `{ block: true, reason }` (the reason goes to stderr as is) | 2 |
 | `check` throws, rejects, never settles, or returns anything else | 2 |
-| The payload is not JSON, names no tool, or has a field of the wrong shape | 2 |
-| The tool is not one of your kinds | 0, and `check` is not called |
+| The payload is not JSON, names no tool, has a field of the wrong shape, or names an event other than PreToolUse, Stop or UserPromptSubmit | 2 |
+| The command says `--event PreToolUse` and the payload names another event | 2 |
+| The command has an argument `hook` does not take | 2, or 0 when its first valid `--event` names Stop or UserPromptSubmit or, with none, the payload does |
+| The tool is not one of your kinds or `tools` | 0, and `check` is not called |
 | The hook cannot start: Node.js is missing, the build was deleted, a dependency was not bundled | 2, from `\|\| exit 2` |
 | The hook runs on a Node.js older than 22 | 2, with a message naming the fix |
 | The hook times out | Claude Code blocks it (`onFailure: "block"`, Claude Code 2.1.295 or later). Codex lets the call run. |
@@ -112,10 +119,48 @@ Keep `check` well inside `timeout`, which defaults to 10 seconds.
 | --- | --- | --- | --- |
 | `shell` | `{ kind: 'shell', command }` | `Bash` | `Bash` |
 | `write` | `{ kind: 'write', path, content }` | `Write`, `NotebookEdit` | `apply_patch` |
-| `edit` | `{ kind: 'edit', path, before, after }` (a MultiEdit's edits joined by newlines) | `Edit`, `MultiEdit` | `apply_patch` |
+| `edit` | `{ kind: 'edit', path, before, after }` (a MultiEdit's edits one call each) | `Edit`, `MultiEdit` | `apply_patch` |
 | `patch` | `{ kind: 'patch', patch }` (the whole patch text) | none | `apply_patch` |
+| `tool` | `{ kind: 'tool', name, input }` (the tool's input object) | the names in `tools` | the names in `tools` |
+
+`tools` names tools beyond the agents' own, such as `mcp__github__create_pull_request`, and `kinds` lists `tool` exactly when it does. A name holds only letters, digits, `_` and `-`, and may not be a tool a kind already covers (`Bash`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `apply_patch`). A listed tool's input that is not an object blocks the call; an absent one reaches the check as `{}`.
 
 Codex sends every file change as one `apply_patch`, so `install codex` refuses a plugin with `write` or `edit` but no `patch`. A plugin with no tool in an agent, such as `['patch']` for Claude Code, is refused too.
+
+## Stop and UserPromptSubmit
+
+`events` adds checks on two more events, installed beside PreToolUse:
+
+```ts
+function verdict(text: string): HookVerdict {
+  return /\bsk-[\w-]{20,}/.test(text)
+    ? { block: true, reason: 'no-pasted-keys: reference the key through an environment variable instead.' }
+    : { block: false }
+}
+
+defineHook({
+  name: 'no-pasted-keys',
+  kinds: ['shell'],
+  check: call => verdict(call.command),
+  events: {
+    Stop: { check: ({ reply }) => verdict(reply) },
+    UserPromptSubmit: { check: ({ prompt }) => verdict(prompt), hidePrompt: true },
+  },
+})
+```
+
+A block goes to stdout as `{"decision":"block","reason":…}`. At Stop the agent keeps going with the reason as its next instruction; at UserPromptSubmit it drops the prompt and shows the reason, and `hidePrompt` keeps Claude Code from printing the prompt back under it (Codex has no such field, and a reply carrying it would let the prompt through, so it is not sent there). Both fail open, since an exit 2 at Stop would keep the agent going forever and one at UserPromptSubmit would drop every prompt:
+
+| What happens | Exit |
+| --- | --- |
+| `check` returns `{ block: true, reason }` | 0, with the decision on stdout |
+| `check` returns `{ block: false }` | 0, silently |
+| `check` throws, rejects, never settles, returns anything else, or the field has the wrong shape | 0, with the cause on stderr |
+| With `--event`: the payload is not JSON, is empty or cut short, or names another event | 0, with the cause on stderr |
+| A Stop payload with `stop_hook_active`, the reply to the hook's own block | 0, and `check` is not called |
+| The hook cannot start, or runs on a Node.js older than 22 | anything but 2: the event passes |
+
+Each event takes its own `statusMessage` and `timeout`, defaulting to the hook's. Without `--event`, a payload that is not JSON is blocked with exit 2 whatever event it was meant for, which is why install writes the flag. A payload with no `hook_event_name` is read as PreToolUse; one naming any other event (`PostToolUse`, `pre_tool_use`, an empty string) is blocked with exit 2, since the tool call it may carry would otherwise run unchecked.
 
 ## API
 
@@ -123,10 +168,10 @@ Codex sends every file change as one `apply_patch`, so `install codex` refuses a
 function defineHook<const K extends ToolKind>(definition: HookDefinition<K>): HookPlugin
 function runCli(plugin: HookPlugin, entryUrl: string, options?: { bin?: string }): Promise<void>
 function createCli(plugin: HookPlugin, options?: { bin?: string }): (argv: readonly string[], io: CliIO) => Promise<number>
-function runHook(plugin: HookPlugin, stdin: string, options?: { cwd?: string, stderr?: (text: string) => void }): Promise<number>
+function runHook(plugin: HookPlugin, stdin: string, options?: { cwd?: string, stderr?: (text: string) => void, stdout?: (text: string) => void, event?: HookEvent, agent?: Agent }): Promise<number>
 function readStdin(stream?: AsyncIterable<unknown>): Promise<string>
-function install(options: InstallOptions): { file: string, command?: string }
-function uninstall(options: UninstallOptions): { file: string }
+function install(options: InstallOptions): InstallResult // { file, command, commands, notes, warnings }
+function uninstall(options: UninstallOptions): InstallResult
 function configFile(agent: Agent, scope: Scope, place: { home: string, cwd: string }): string
 function matcherFor(agent: Agent, kinds: readonly ToolKind[]): string
 function claudePluginFiles(options: ClaudePluginOptions): Record<string, string>
@@ -140,9 +185,14 @@ function writeClaudePlugin(dir: string, options: ClaudePluginOptions): string[]
 | `packageName` | `name` | The npm package a project install runs through `npx --no-install`. |
 | `statusMessage` | `Running <name>` | What the agent shows while the hook runs. |
 | `timeout` | `10` | Seconds the agent waits for the hook. |
-| `ownCommands` | `[]` | Patterns for commands an earlier version of your hook wrote, which install replaces and uninstall removes. A pattern must match the whole command, not a part of it; the `g`, `m` and `y` flags are refused. |
+| `ownCommands` | `[]` | Patterns for commands an earlier version of your hook wrote, which install replaces and uninstall removes, at any event. A pattern must match the whole command, not a part of it; the `g`, `m` and `y` flags are refused. |
+| `tools` | `[]` | Tools beyond the agents' own, checked as `tool` calls. |
+| `events` | `{}` | `Stop` and `UserPromptSubmit` checks, each with an optional `statusMessage` and `timeout`, and `hidePrompt` for UserPromptSubmit. |
+| `onInstall`, `onUninstall` | none | Steps run after the config is written; see [What install writes](#what-install-writes). They do not run for a Claude Code plugin. |
 
 `runCli` is the only function that reads the home directory, the working directory and the Node.js path from the process; the others take them as arguments, which keeps tests away from your real `~`. `writeClaudePlugin` writes the files to ship the same hook as a Claude Code plugin instead; use either the plugin or `install claude`, not both.
+
+The commands install and `writeClaudePlugin` write pass `--event` and `--agent`, which `createCli` hands to `runHook`. A bin that wires its own hook command passes them as `runHook`'s `event` and `agent` options, so a cut-short payload at Stop or UserPromptSubmit passes there too.
 
 ## Contributing
 

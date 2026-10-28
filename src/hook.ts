@@ -1,4 +1,4 @@
-import type { HookPlugin, HookVerdict, ToolCall } from './types'
+import type { Agent, HookEvent, HookPlugin, HookVerdict, ToolCall } from './types'
 import process from 'node:process'
 import { KIND_OF_TOOL } from './agents'
 
@@ -8,7 +8,32 @@ export interface RunHookOptions {
   cwd?: string
   /** Receives the block reason or the error, newline-terminated. */
   stderr?: (text: string) => void
+  /** Receives the decision a Stop or UserPromptSubmit check blocks with, as a JSON line. */
+  stdout?: (text: string) => void
+  /**
+   * The event the agent runs the hook for, as the installed command names it
+   * with `--event`. Given, it decides how a fault exits without reading the
+   * payload, so a Stop or UserPromptSubmit payload that is cut short or not
+   * JSON passes, and a payload naming another event is a fault. Absent, the
+   * event comes from the payload's `hook_event_name`.
+   */
+  event?: HookEvent
+  /**
+   * The agent that runs the hook, as the installed command names it with
+   * `--agent`. Absent, a UserPromptSubmit payload carrying `turn_id`, which
+   * only Codex sends, reads as Codex.
+   */
+  agent?: Agent
 }
+
+// The events whose hook lets the agent go on when it cannot decide: an exit 2
+// at Stop keeps the agent going, so a broken hook would loop it, and one at
+// UserPromptSubmit would drop every prompt the user sends.
+const OPEN_EVENTS = ['Stop', 'UserPromptSubmit'] as const
+type OpenEvent = typeof OPEN_EVENTS[number]
+const EVENTS: readonly HookEvent[] = ['PreToolUse', ...OPEN_EVENTS]
+
+const isOpen = (event: unknown): event is OpenEvent => (OPEN_EVENTS as readonly unknown[]).includes(event)
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 
@@ -42,9 +67,25 @@ function editList(input: Record<string, unknown>): Record<string, unknown>[] {
 
 // Claude Code and Codex share the hook protocol; they differ in tool names and
 // in Codex's apply_patch, which carries a whole patch instead of one file.
-function toToolCall(tool: string, input: Record<string, unknown>): ToolCall {
+//
+// A MultiEdit is one call per edit. Joined into one pair, a check that asks
+// whether `after` adds what `before` lacks would pass a token one edit adds
+// whenever another edit's old_string holds it, where the same edit made alone
+// would be caught.
+function toToolCalls(plugin: HookPlugin, tool: string, input: Record<string, unknown>): ToolCall[] {
+  if (tool !== 'MultiEdit')
+    return [toToolCall(plugin, tool, input)]
+  const path = stringField(input, 'file_path')
+  const edits = editList(input)
+  if (edits.length === 0)
+    return [{ kind: 'edit', path, before: '', after: '' }]
+  return edits.map(edit => ({ kind: 'edit', path, before: stringField(edit, 'old_string'), after: stringField(edit, 'new_string') }))
+}
+
+function toToolCall(plugin: HookPlugin, tool: string, input: Record<string, unknown>): ToolCall {
+  if (plugin.tools.includes(tool))
+    return { kind: 'tool', name: tool, input }
   const text = (key: string, from = input): string => stringField(from, key)
-  const joined = (key: string): string => editList(input).map(edit => text(key, edit)).join('\n')
   switch (tool) {
     case 'Bash':
       return { kind: 'shell', command: text('command') }
@@ -54,8 +95,6 @@ function toToolCall(tool: string, input: Record<string, unknown>): ToolCall {
       return { kind: 'write', path: text('notebook_path'), content: text('new_source') }
     case 'Edit':
       return { kind: 'edit', path: text('file_path'), before: text('old_string'), after: text('new_string') }
-    case 'MultiEdit':
-      return { kind: 'edit', path: text('file_path'), before: joined('old_string'), after: joined('new_string') }
     case 'apply_patch':
       return { kind: 'patch', patch: text('command') || text('input') || text('patch') }
     default:
@@ -73,37 +112,140 @@ function verdictOf(value: unknown): HookVerdict {
   throw new TypeError('check returned neither { block: false } nor { block: true, reason }')
 }
 
+const messageOf = (error: unknown): string => error instanceof Error ? error.message : String(error)
+
 /**
- * Runs one PreToolUse call through the plugin and returns the exit code the
- * agent reads: 2 blocks the call, 0 lets it run.
+ * The event a hook payload is for when it names one the hook lets pass on a
+ * fault, else `undefined`. Read before the Node.js check and the hang guard,
+ * which must not block these either.
+ */
+export function openEventOf(stdin: string): OpenEvent | undefined {
+  try {
+    const event: unknown = JSON.parse(stdin)?.hook_event_name
+    return OPEN_EVENTS.find(open => open === event)
+  }
+  catch {
+    return undefined
+  }
+}
+
+/**
+ * Whether a fault lets the event pass: the named event when the command names
+ * one, else the event the payload names.
+ */
+export function passesOnFault(event: HookEvent | undefined, stdin: string): boolean {
+  return event === undefined ? openEventOf(stdin) !== undefined : isOpen(event)
+}
+
+function payloadOf(stdin: string): Record<string, unknown> {
+  const payload: unknown = JSON.parse(stdin)
+  if (!isObject(payload))
+    throw new TypeError('payload is not an object')
+  return payload
+}
+
+async function runOpenEvent(plugin: HookPlugin, event: OpenEvent, read: () => Record<string, unknown>, options: RunHookOptions): Promise<number> {
+  const hook = plugin.events[event]
+  if (!hook)
+    return 0
+  const stderr = options.stderr ?? ((text: string) => void process.stderr.write(text))
+  const stdout = options.stdout ?? ((text: string) => void process.stdout.write(text))
+  try {
+    const payload = read()
+    if (payload.hook_event_name !== undefined && payload.hook_event_name !== event)
+      throw new TypeError(`hook_event_name ${JSON.stringify(payload.hook_event_name)} is not ${event}`)
+    if (options.agent !== undefined && options.agent !== 'claude' && options.agent !== 'codex')
+      throw new TypeError(`agent ${JSON.stringify(options.agent)} is neither claude nor codex`)
+    // A Stop hook that blocks again on the reply its own block produced would
+    // keep the agent going forever.
+    if (event === 'Stop' && payload.stop_hook_active === true)
+      return 0
+    const cwd = stringField(payload, 'cwd') || (options.cwd ?? process.cwd())
+    const verdict = event === 'Stop'
+      ? verdictOf(await plugin.events.Stop!.check({ reply: stringField(payload, 'last_assistant_message') }, { cwd }))
+      : verdictOf(await plugin.events.UserPromptSubmit!.check({ prompt: stringField(payload, 'prompt') }, { cwd }))
+    if (!verdict.block)
+      return 0
+    // Codex rejects any hookSpecificOutput field it does not know, and a reply
+    // it cannot read lets the prompt through, so the field goes only to Claude
+    // Code. Without `--agent`, `turn_id` tells them apart: Codex's input schema
+    // requires it at UserPromptSubmit, and Claude Code does not send it.
+    const codex = options.agent === undefined ? payload.turn_id !== undefined : options.agent === 'codex'
+    const hidden = event === 'UserPromptSubmit' && plugin.events.UserPromptSubmit!.hidePrompt && !codex
+    stdout(`${JSON.stringify({
+      decision: 'block',
+      reason: verdict.reason,
+      ...(hidden ? { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', suppressOriginalPrompt: true } } : {}),
+    })}\n`)
+  }
+  catch (error) {
+    stderr(`${plugin.name} could not check the ${event === 'Stop' ? 'reply' : 'prompt'}, so it let it pass: ${messageOf(error)}\n`)
+  }
+  return 0
+}
+
+/**
+ * Runs one hook payload through the plugin and returns the exit code the
+ * agent reads.
  *
- * It fails closed. A payload that is not JSON or names no tool, a field of the
- * wrong shape, a check that throws or rejects, and a result that is not a
- * verdict all return 2 with the error on stderr, because any other exit lets
- * the call run unchecked. A tool the plugin did not ask for returns 0 without
- * calling the check.
+ * A PreToolUse call returns 2 to block it and 0 to let it run, and fails
+ * closed: a payload that is not JSON or names no tool, a field of the wrong
+ * shape, a check that throws or rejects, and a result that is not a verdict
+ * all return 2 with the error on stderr, because any other exit lets the call
+ * run unchecked. A tool the plugin did not ask for returns 0 without calling
+ * the check. A MultiEdit calls the check once per edit and blocks on the first
+ * edit it blocks. A payload with no `hook_event_name` is read as PreToolUse;
+ * one naming any event other than PreToolUse, Stop or UserPromptSubmit, or
+ * a `hook_event_name` that is not a string, returns 2.
+ *
+ * Stop and UserPromptSubmit always return 0. A block goes to stdout as
+ * `{"decision":"block","reason":…}`, and a fault to stderr, letting the event
+ * pass. A Stop with `stop_hook_active` set passes unchecked, and so does an
+ * event the plugin has no check for.
+ *
+ * With `options.event`, the event is the one named, not the payload's: a
+ * Stop or UserPromptSubmit returns 0 on any fault, a payload that is not JSON
+ * included, and a payload naming another event is a fault for that event.
  */
 export async function runHook(plugin: HookPlugin, stdin: string, options: RunHookOptions = {}): Promise<number> {
   const stderr = options.stderr ?? ((text: string) => void process.stderr.write(text))
+  if (isOpen(options.event))
+    return runOpenEvent(plugin, options.event, () => payloadOf(stdin), options)
   let verdict: HookVerdict
   try {
-    const payload: unknown = JSON.parse(stdin)
-    if (!isObject(payload))
-      throw new TypeError('payload is not an object')
+    if (options.event !== undefined && !EVENTS.includes(options.event))
+      throw new TypeError(`event ${JSON.stringify(options.event)} is not an event the hook runs`)
+    const payload = payloadOf(stdin)
+    const event = payload.hook_event_name
+    if (options.event === undefined && isOpen(event))
+      return runOpenEvent(plugin, event, () => payload, options)
+    // Install writes only PreToolUse and the open events, so any other name
+    // (a misspelling, another case, an event a later agent adds) is a payload
+    // this does not know, and passing it would let the call it carries run.
+    // Only an absent name reads as PreToolUse, the one event every hook has.
+    // A command installed for PreToolUse blocks whatever event the payload
+    // names, since the agent reads its exit as PreToolUse's.
+    if (event !== undefined && event !== 'PreToolUse')
+      throw new TypeError(`hook_event_name ${JSON.stringify(event)} is not ${options.event ?? 'an event the hook runs'}`)
     // Both agents always name the tool, so a payload without one is a shape
     // this does not know, and reading it as some other tool would let it run.
     const tool = payload.tool_name
     if (typeof tool !== 'string' || tool === '')
       throw new TypeError('tool_name is not a tool name')
-    const kind = KIND_OF_TOOL.get(tool)
+    const kind = plugin.tools.includes(tool) ? 'tool' : KIND_OF_TOOL.get(tool)
     if (kind === undefined || !plugin.kinds.includes(kind))
       return 0
-    const call = toToolCall(tool, record(payload.tool_input, 'tool_input'))
+    const calls = toToolCalls(plugin, tool, record(payload.tool_input, 'tool_input'))
     const cwd = stringField(payload, 'cwd') || (options.cwd ?? process.cwd())
-    verdict = verdictOf(await plugin.check(call, { cwd }))
+    verdict = { block: false }
+    for (const call of calls) {
+      verdict = verdictOf(await plugin.check(call, { cwd }))
+      if (verdict.block)
+        break
+    }
   }
   catch (error) {
-    stderr(`Blocked by ${plugin.name}, it could not check the call: ${error instanceof Error ? error.message : String(error)}\n`)
+    stderr(`Blocked by ${plugin.name}, it could not check the call: ${messageOf(error)}\n`)
     return 2
   }
   if (!verdict.block)

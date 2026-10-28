@@ -14,6 +14,8 @@ function textOf(call: ToolCall): string {
       return call.after
     case 'patch':
       return call.patch
+    case 'tool':
+      return JSON.stringify(call.input)
   }
 }
 
